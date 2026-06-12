@@ -1162,6 +1162,7 @@ function renderBoard() {
   }
 
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
+  dom.board.classList.toggle("board--collecting", gameState.isDragging);
   dom.board.innerHTML = "";
   const fragment = document.createDocumentFragment();
 

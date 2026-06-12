@@ -61,6 +61,10 @@
 - 按最新调参要求增强视觉反馈：飞花尺寸从 `32px` 提升到 `50px`，`本轮暂存` HUD 弹跳峰值改为 `scale(1.5)`
 - 新增翻格音效：在 `setTileRevealed()` 内首次解锁时播放 `assets/audio/sfx/tile-reveal.wav`；使用 `HTMLAudioElement` clone 播放支持快速连翻，失败静默；`beginRun()` 中通过 `primeCollectAudio()` 链路顺带预热 Audio 对象降低首响延迟
 - 新增撞天敌音效：`extendRun()` 的 enemy 分支在 `setTileRevealed(tileId, { silent: true })` 之后立即调用 `playTileEnemyHitSound()`；采用方案 A 在 enemy 分支抑制 reveal 音效、单独播 enemy-hit 音，避免叠音；其它路径 reveal 行为不变
+- 新增采集范围高亮：`.board` 增加状态 class `board--collecting`，仅在 `gameState.isDragging===true` 时挂上；在 `renderBoard()` 内紧挨 `board--fail-flash` 切换处由 `classList.toggle("board--collecting", gameState.isDragging)` 单点维护
+- 配套 CSS：`.board .tile { transition: filter 0.28s ease, opacity 0.28s ease; }`；`.board--collecting .tile:not(.tile--path):not(.tile--start) { filter: brightness(0.55) saturate(0.75); }`；起点与路径自动豁免
+- 与既有反馈隔离：`tile--shake` / `tile--start-pulse` 使用 transform，与 filter 不冲突；`.board--fail-flash` 走 box-shadow 关键帧，亦不动 filter；飞花 `#fx-overlay` 在 board 外不受影响
+- 注意：现版 `renderBoard()` 每次都会 `innerHTML = ""` 全量重建 tile DOM，CSS transition 在新挂载节点上不会播过渡；上述 dim 规则当前会以"瞬切"形态生效。如需严格走 0.28s 过渡，需要后续改为 diff 渲染或在 dim 触发时延后挂 `board--collecting`，留给 B-FIX 视觉回归阶段评估
 - 新增长按自定义光标：常驻 DOM `#custom-cursor`，外层用 `transform: translate3d` 跟随鼠标位置，内层 `.custom-cursor__inner` 独立做 pop / fade 动画，避免与位置 transform 冲突
 - 自定义光标只在 `pointerType==='mouse'` 且 `button===0` 时启用，桌面端长按生效，触控不介入
 - 按下时给 `body` 加 `is-dragging-cursor` class 强制 `cursor: none !important`；松手时移除并播放淡出动画
@@ -120,6 +124,7 @@
   18. 接入自定义光标后再次执行 `node --check app.js`，语法通过；事件挂在 `window` 上，与 `board` 上的采集事件互不干扰
   19. 接入撞天敌音效后再次执行 `node --check app.js`，语法通过；enemy 分支用 `setTileRevealed(tileId, { silent: true })` 静音 reveal、再单独播放 enemy-hit，避免叠音；安全/花格 reveal 音效不被抑制
   20. 切换自定义光标资源到 `assets/ui/cursor/cursor-default.png` 后再次执行 `node --check app.js`，语法通过；路径仅在 `customCursorAsset` 常量出现一次，HTML 中 `src` 由 JS 初始化时写入
+  21. 接入采集范围高亮后再次执行 `node --check app.js`，语法通过；`board--collecting` 仅在 `renderBoard()` 内 `gameState.isDragging` 真值时挂上；未新增逐格 JS 样式写入；未改动 `createTileElement` 的 class 列表
 - 未做：浏览器人工打开验收
 - 未验证原因：当前会话未启动浏览器进行视觉检查，也无法在此直接录屏；尚未人工确认飞花轨迹、HUD 吸附弹跳、音效触发时机、移动端缩放后的锚点精度
 - 建议验证步骤：

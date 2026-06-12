@@ -229,6 +229,14 @@ body::before {
   animation: board-fail-flash 0.42s ease;
 }
 
+.board .tile {
+  transition: filter 0.28s ease, opacity 0.28s ease;
+}
+
+.board--collecting .tile:not(.tile--path):not(.tile--start) {
+  filter: brightness(0.55) saturate(0.75);
+}
+
 .tile {
   position: absolute;
   left: var(--left);
