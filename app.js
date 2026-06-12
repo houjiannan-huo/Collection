@@ -22,6 +22,7 @@ const rowSlots = [
 ];
 const startTileId = "T18";
 const initialBeeCount = 5;
+const honeyGoalTarget = 15;
 const initialStatusText = "选择任意已翻开的格子（天敌除外）作为起点，按住滑动。";
 const animationDurations = {
   failFlash: 420,
@@ -65,8 +66,8 @@ const bgmConfig = {
 };
 const tileTypeCounts = {
   enemy: 3,
-  flower: 8,
-  empty: 8,
+  flower: 10,
+  empty: 6,
 };
 
 const boardMetrics = {
@@ -316,6 +317,7 @@ function createInitialGameState(options = {}) {
     totalHoneyPulse: false,
     startPulseTileId: null,
     isGameOver: false,
+    isGameWin: false,
     tileStateMap,
   };
 }
@@ -342,6 +344,9 @@ const dom = hasDom
       gameOver: document.getElementById("game-over"),
       gameOverSummary: document.getElementById("game-over-summary"),
       restartButton: document.getElementById("restart-button"),
+      gameWin: document.getElementById("game-win"),
+      gameWinSummary: document.getElementById("game-win-summary"),
+      restartWinButton: document.getElementById("restart-win-button"),
     }
   : null;
 
@@ -1425,7 +1430,7 @@ function renderHud() {
     return;
   }
 
-  dom.totalHoney.textContent = String(gameState.totalHoney);
+  dom.totalHoney.textContent = `${gameState.totalHoney} / ${honeyGoalTarget}`;
   if (feedbackState.isHudRolling) {
     renderRoundHoneyValue(feedbackState.hudRollingFrom, feedbackState.hudRollingTo);
   } else {
@@ -1459,8 +1464,14 @@ function renderHud() {
   }
 
   if (dom.gameOver && dom.gameOverSummary) {
-    dom.gameOver.hidden = !gameState.isGameOver;
+    // 通关时优先显示 win 面板，game-over 面板隐藏
+    dom.gameOver.hidden = gameState.isGameWin || !gameState.isGameOver;
     dom.gameOverSummary.textContent = `总花蜜：${gameState.totalHoney}`;
+  }
+
+  if (dom.gameWin && dom.gameWinSummary) {
+    dom.gameWin.hidden = !gameState.isGameWin;
+    dom.gameWinSummary.textContent = `已达成目标 ${honeyGoalTarget}，实际花蜜 ${gameState.totalHoney}`;
   }
 }
 
@@ -1694,7 +1705,13 @@ function completeRun(outcome) {
   gameState.currentPath = [];
   gameState.hasHitEnemy = false;
   gameState.lastOutcome = outcome;
-  if (outcome === "failure") {
+  if (outcome === "success" && gameState.totalHoney >= honeyGoalTarget) {
+    gameState.isGameWin = true;
+    gameState.isGameOver = true;
+    gameState.statusText = `恭喜通关！总花蜜：${gameState.totalHoney}`;
+    showToast("恭喜通关！", "success");
+    logEvent("通关", getStateSnapshot());
+  } else if (outcome === "failure") {
     updateGameOverState();
   } else if (gameState.remainingBees <= 0) {
     updateGameOverState();
@@ -2047,6 +2064,7 @@ function attachEventListeners() {
     });
   };
   dom.restartButton?.addEventListener("click", restartHandler);
+  dom.restartWinButton?.addEventListener("click", restartHandler);
   window.addEventListener("resize", applyResponsiveGameScale);
 }
 

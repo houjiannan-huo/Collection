@@ -671,6 +671,15 @@ body.is-dragging-cursor * {
   text-align: center;
 }
 
+.game-win {
+  background: rgba(255, 244, 196, 0.98);
+  border-color: rgba(220, 150, 32, 0.45);
+}
+
+.game-win__title {
+  color: #c97a14;
+}
+
 .game-over__title {
   display: block;
   font-size: 24px;

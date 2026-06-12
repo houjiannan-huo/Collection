@@ -12,8 +12,8 @@
         <div id="game-stage" class="game-stage">
           <header class="hud">
             <section class="hud-card hud-card--primary">
-              <span class="hud-label">总花蜜</span>
-              <strong id="total-honey">0</strong>
+              <span class="hud-label">目标</span>
+              <strong id="total-honey">0 / 15</strong>
             </section>
             <section id="round-honey-card" class="hud-card hud-card--secondary">
               <span class="hud-label">本轮暂存</span>
@@ -32,6 +32,11 @@
               <strong class="game-over__title">游戏结束</strong>
               <p id="game-over-summary" class="game-over__summary">总花蜜：0</p>
               <button id="restart-button" class="game-over__button" type="button">重新开始</button>
+            </div>
+            <div id="game-win" class="game-over game-win" hidden>
+              <strong class="game-over__title game-win__title">恭喜通关！</strong>
+              <p id="game-win-summary" class="game-over__summary">已达成目标 15 花蜜</p>
+              <button id="restart-win-button" class="game-over__button" type="button">再来一局</button>
             </div>
           </section>
 
