@@ -1,10 +1,10 @@
 # B-COD 记录
 
 ## Claim
-- 任务 ID：B-COD-DEMO-FEEDBACK-001
-- 当前 claim：模块《花朵采集反馈》
-- 范围：仅接入飞花采集反馈、HUD 吸附/弹跳/音效、本轮暂存数值平滑递增；不改现有主玩法规则与结算口径
-- 说明：当前目录仅发现 `B-COD.md`，未找到 `A-PLN.md`、`A-SRC.md`、`A-ASK.md`，本次按任务卡直接实现；现有 `本轮暂存` UI 需要补稳定锚点与反馈动画类
+- 任务 ID：B-COD-DEMO-FEEDBACK-002
+- 当前 claim：模块《长按状态自定义光标反馈》
+- 范围：长按时隐藏系统光标，独立 DOM 跟随层呈现自定义光标，含缩放弹出与松手淡出；不改现有滑动采集主流程
+- 说明：上一轮 `B-COD-DEMO-FEEDBACK-001` 已闭环；本轮在其基础上叠加桌面端自定义光标反馈，暂不做移动端触控适配
 
 ## 实现记录
 - 新建最小静态前端文件：`index.html`、`style.css`、`app.js`
@@ -60,6 +60,12 @@
 - 按最新调参要求更新飞花手感：飞行总时长改为 `1000ms`，多朵错峰发射间隔改为 `140ms`
 - 按最新调参要求增强视觉反馈：飞花尺寸从 `32px` 提升到 `50px`，`本轮暂存` HUD 弹跳峰值改为 `scale(1.5)`
 - 新增翻格音效：在 `setTileRevealed()` 内首次解锁时播放 `assets/audio/sfx/tile-reveal.wav`；使用 `HTMLAudioElement` clone 播放支持快速连翻，失败静默；`beginRun()` 中通过 `primeCollectAudio()` 链路顺带预热 Audio 对象降低首响延迟
+- 新增撞天敌音效：`extendRun()` 的 enemy 分支在 `setTileRevealed(tileId, { silent: true })` 之后立即调用 `playTileEnemyHitSound()`；采用方案 A 在 enemy 分支抑制 reveal 音效、单独播 enemy-hit 音，避免叠音；其它路径 reveal 行为不变
+- 新增长按自定义光标：常驻 DOM `#custom-cursor`，外层用 `transform: translate3d` 跟随鼠标位置，内层 `.custom-cursor__inner` 独立做 pop / fade 动画，避免与位置 transform 冲突
+- 自定义光标只在 `pointerType==='mouse'` 且 `button===0` 时启用，桌面端长按生效，触控不介入
+- 按下时给 `body` 加 `is-dragging-cursor` class 强制 `cursor: none !important`；松手时移除并播放淡出动画
+- 跟随逻辑只在 `pointermove` 内更新 transform，并用 `requestAnimationFrame` 合并多次坐标更新，避免布局抖动
+- 监听挂在 `window` 上，与现有 `board` 上的滑动采集事件解耦，不影响 `beginRun / extendRun / endRun` 流程
 
 ## 接口登记
 - 无外部接口
@@ -76,6 +82,13 @@
 - 飞花资源入口：`flowerFlyAsset`（位于 `app.js`，默认指向 `assets/effects/flower-fly.svg`）
 - 翻格音效资源入口：`tileRevealSoundAsset`（位于 `app.js`，默认指向 `assets/audio/sfx/tile-reveal.wav`）
 - 翻格音效函数：`playTileRevealSound()` / `primeTileRevealSound()`（位于 `app.js`），在 `setTileRevealed()` 内首次解锁时触发一次，每次 `cloneNode` 播放支持快速连翻
+- 撞天敌音效资源入口：`tileEnemyHitSoundAsset`（位于 `app.js`，默认指向 `assets/audio/sfx/tile-enemy-hit.wav`）
+- 撞天敌音效函数：`playTileEnemyHitSound()` / `primeTileEnemyHitSound()`（位于 `app.js`），在 `extendRun()` 的 enemy 分支内 `setTileRevealed(tileId, { silent: true })` 之后立即调用，确保一次失败仅一声
+- `setTileRevealed(tileId, options)` 新增可选参数 `{ silent }`：enemy 分支传 `silent: true` 跳过 reveal 音效，避免与 enemy-hit 音效叠音（方案 A）
+- 自定义光标 DOM 锚点：`#custom-cursor`（位于 `index.html`，内嵌 `.custom-cursor__inner > img`）
+- 自定义光标资源入口：`customCursorAsset`（位于 `app.js`，默认指向 `assets/ui/cursor/cursor-default.png`），由 `attachCustomCursorListeners()` 在初始化时单点写入 `#custom-cursor-image.src`，HTML 不再写死路径
+- 自定义光标控制函数：`showCustomCursor(event)` / `hideCustomCursor()` / `attachCustomCursorListeners()`（位于 `app.js`）
+- 自定义光标运行态：`customCursorState`（位于 `app.js`，含 `isActive / pointerId / pendingX / pendingY / rafId / hideTimer`）
 
 ## 验证记录
 - 已做：
@@ -104,6 +117,9 @@
   15. 最新调参后再次执行 `node --check app.js`，语法通过
   16. 飞花总时长改为 `1000ms` 后再次执行 `node --check app.js`，语法通过
   17. 接入翻格音效后再次执行 `node --check app.js`，语法通过；初始 `T18` 已 revealed，初始化不会重复触发；同格不会重复触发；重开后再次解锁可再触发
+  18. 接入自定义光标后再次执行 `node --check app.js`，语法通过；事件挂在 `window` 上，与 `board` 上的采集事件互不干扰
+  19. 接入撞天敌音效后再次执行 `node --check app.js`，语法通过；enemy 分支用 `setTileRevealed(tileId, { silent: true })` 静音 reveal、再单独播放 enemy-hit，避免叠音；安全/花格 reveal 音效不被抑制
+  20. 切换自定义光标资源到 `assets/ui/cursor/cursor-default.png` 后再次执行 `node --check app.js`，语法通过；路径仅在 `customCursorAsset` 常量出现一次，HTML 中 `src` 由 JS 初始化时写入
 - 未做：浏览器人工打开验收
 - 未验证原因：当前会话未启动浏览器进行视觉检查，也无法在此直接录屏；尚未人工确认飞花轨迹、HUD 吸附弹跳、音效触发时机、移动端缩放后的锚点精度
 - 建议验证步骤：
@@ -114,6 +130,10 @@
   5. 确认 `本轮暂存` 数字按到达节奏连续滚动递增，多朵衔接时不抖碎、不回退
   6. 成功松手后确认总花蜜结算、起点继承、飞花/数字收尾没有破坏原有主流程
   7. 失败踩敌后确认未到达飞花不会残留到下一轮
+  8. 长按任意位置后系统指针应立即消失，自定义光标出现并做缩放弹出
+  9. 长按移动鼠标，确认自定义光标稳定跟随、中心点对齐判定点
+  10. 松手后自定义光标应淡出而非瞬间消失，系统指针恢复
+  11. 快速 down/up/down 切换时光标状态切换不卡，不残留
 
 ## 协作需求
 - 默认可交给 `B-FIX` 做浏览器实机回归：飞花层级、Bezier 弧线观感、HUD 锚点精度、音效时机与移动端缩放适配

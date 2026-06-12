@@ -416,6 +416,83 @@ body::before {
   z-index: 20;
 }
 
+.custom-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 56px;
+  height: 56px;
+  margin-left: -28px;
+  margin-top: -28px;
+  pointer-events: none;
+  will-change: transform;
+  z-index: 9999;
+  display: none;
+  transform: translate3d(-9999px, -9999px, 0);
+}
+
+.custom-cursor.is-active,
+.custom-cursor.is-hiding {
+  display: block;
+}
+
+.custom-cursor__inner {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transform: scale(0.4);
+  will-change: transform, opacity;
+}
+
+.custom-cursor.is-active .custom-cursor__inner {
+  animation: custom-cursor-pop 0.22s cubic-bezier(0.22, 1.4, 0.4, 1) forwards;
+}
+
+.custom-cursor.is-hiding .custom-cursor__inner {
+  animation: custom-cursor-fade 0.18s ease-out forwards;
+}
+
+.custom-cursor__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+body.is-dragging-cursor,
+body.is-dragging-cursor * {
+  cursor: none !important;
+}
+
+@keyframes custom-cursor-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes custom-cursor-fade {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+
 .flower-fly {
   position: absolute;
   left: 0;

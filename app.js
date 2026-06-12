@@ -44,6 +44,8 @@ const collectFeedbackConfig = {
 };
 const flowerFlyAsset = "./assets/effects/flower-fly.svg";
 const tileRevealSoundAsset = "./assets/audio/sfx/tile-reveal.wav";
+const tileEnemyHitSoundAsset = "./assets/audio/sfx/tile-enemy-hit.wav";
+const customCursorAsset = "./assets/ui/cursor/cursor-default.png";
 const tileTypeCounts = {
   enemy: 3,
   flower: 8,
@@ -656,6 +658,7 @@ function primeCollectAudio() {
     audioContext.resume().catch(() => {});
   }
   primeTileRevealSound();
+  primeTileEnemyHitSound();
 }
 
 let tileRevealSoundTemplate = null;
@@ -684,6 +687,41 @@ function playTileRevealSound() {
     const instance = tileRevealSoundTemplate
       ? tileRevealSoundTemplate.cloneNode(true)
       : new Audio(tileRevealSoundAsset);
+    const playResult = instance.play();
+    if (playResult && typeof playResult.catch === "function") {
+      playResult.catch(() => {});
+    }
+  } catch (_error) {
+    // 失败静默，不影响主流程
+  }
+}
+
+let tileEnemyHitSoundTemplate = null;
+
+function primeTileEnemyHitSound() {
+  if (typeof Audio === "undefined") {
+    return;
+  }
+
+  if (!tileEnemyHitSoundTemplate) {
+    try {
+      tileEnemyHitSoundTemplate = new Audio(tileEnemyHitSoundAsset);
+      tileEnemyHitSoundTemplate.preload = "auto";
+    } catch (_error) {
+      tileEnemyHitSoundTemplate = null;
+    }
+  }
+}
+
+function playTileEnemyHitSound() {
+  if (typeof Audio === "undefined") {
+    return;
+  }
+
+  try {
+    const instance = tileEnemyHitSoundTemplate
+      ? tileEnemyHitSoundTemplate.cloneNode(true)
+      : new Audio(tileEnemyHitSoundAsset);
     const playResult = instance.play();
     if (playResult && typeof playResult.catch === "function") {
       playResult.catch(() => {});
@@ -886,14 +924,15 @@ function queueRoundHoneyReset() {
   maybeResetRoundHoneyAfterArrival();
 }
 
-function setTileRevealed(tileId) {
+function setTileRevealed(tileId, options = {}) {
+  const { silent = false } = options;
   const tileState = gameState.tileStateMap[tileId];
   const wasRevealed = tileState.revealed;
   tileState.revealed = true;
   tileState.unlocked = true;
   gameState.revealedTiles.add(tileId);
 
-  if (!wasRevealed) {
+  if (!wasRevealed && !silent) {
     playTileRevealSound();
   }
 }
@@ -1268,7 +1307,8 @@ function extendRun(tileId) {
   gameState.currentPath.push(tileId);
 
   if (tileState.type === "enemy") {
-    setTileRevealed(tileId);
+    setTileRevealed(tileId, { silent: true });
+    playTileEnemyHitSound();
     gameState.hasHitEnemy = true;
     gameState.statusText = `踩到天敌 ${tileId}，本轮花蜜清零。`;
     logEvent("踩到天敌", {
@@ -1383,6 +1423,170 @@ function handlePointerCancel(event) {
   releasePointer(event.pointerId);
 }
 
+const customCursorState = {
+  element: null,
+  pointerId: null,
+  isActive: false,
+  pendingX: 0,
+  pendingY: 0,
+  rafId: null,
+  hideTimer: null,
+};
+
+const CUSTOM_CURSOR_FADE_MS = 180;
+
+function getCustomCursorElement() {
+  if (!hasDom) {
+    return null;
+  }
+
+  if (!customCursorState.element) {
+    customCursorState.element = document.getElementById("custom-cursor");
+  }
+
+  return customCursorState.element;
+}
+
+function applyCustomCursorPosition() {
+  customCursorState.rafId = null;
+  const element = getCustomCursorElement();
+  if (!element || !customCursorState.isActive) {
+    return;
+  }
+
+  element.style.transform = `translate3d(${customCursorState.pendingX}px, ${customCursorState.pendingY}px, 0)`;
+}
+
+function scheduleCustomCursorPosition(x, y) {
+  customCursorState.pendingX = x;
+  customCursorState.pendingY = y;
+
+  if (customCursorState.rafId !== null) {
+    return;
+  }
+
+  customCursorState.rafId = requestAnimationFrame(applyCustomCursorPosition);
+}
+
+function showCustomCursor(event) {
+  const element = getCustomCursorElement();
+  if (!element) {
+    return;
+  }
+
+  if (customCursorState.hideTimer !== null) {
+    clearTimeout(customCursorState.hideTimer);
+    customCursorState.hideTimer = null;
+  }
+
+  customCursorState.isActive = true;
+  customCursorState.pointerId = event.pointerId;
+  document.body.classList.add("is-dragging-cursor");
+  element.classList.remove("is-hiding");
+  // 强制 reflow 让重启 pop 动画
+  void element.offsetWidth;
+  element.classList.add("is-active");
+
+  customCursorState.pendingX = event.clientX;
+  customCursorState.pendingY = event.clientY;
+  element.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
+}
+
+function hideCustomCursor() {
+  const element = getCustomCursorElement();
+  if (!element || !customCursorState.isActive) {
+    return;
+  }
+
+  customCursorState.isActive = false;
+  customCursorState.pointerId = null;
+  element.classList.remove("is-active");
+  element.classList.add("is-hiding");
+  document.body.classList.remove("is-dragging-cursor");
+
+  if (customCursorState.rafId !== null) {
+    cancelAnimationFrame(customCursorState.rafId);
+    customCursorState.rafId = null;
+  }
+
+  if (customCursorState.hideTimer !== null) {
+    clearTimeout(customCursorState.hideTimer);
+  }
+
+  customCursorState.hideTimer = setTimeout(() => {
+    customCursorState.hideTimer = null;
+    if (!customCursorState.isActive) {
+      element.classList.remove("is-hiding");
+    }
+  }, CUSTOM_CURSOR_FADE_MS);
+}
+
+function handleCustomCursorPointerDown(event) {
+  if (event.pointerType && event.pointerType !== "mouse") {
+    return;
+  }
+
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  showCustomCursor(event);
+}
+
+function handleCustomCursorPointerMove(event) {
+  if (!customCursorState.isActive) {
+    return;
+  }
+
+  if (
+    customCursorState.pointerId !== null &&
+    event.pointerId !== undefined &&
+    event.pointerId !== customCursorState.pointerId
+  ) {
+    return;
+  }
+
+  scheduleCustomCursorPosition(event.clientX, event.clientY);
+}
+
+function handleCustomCursorPointerEnd(event) {
+  if (!customCursorState.isActive) {
+    return;
+  }
+
+  if (
+    customCursorState.pointerId !== null &&
+    event.pointerId !== undefined &&
+    event.pointerId !== customCursorState.pointerId
+  ) {
+    return;
+  }
+
+  hideCustomCursor();
+}
+
+function attachCustomCursorListeners() {
+  if (!hasDom) {
+    return;
+  }
+
+  const cursorEl = getCustomCursorElement();
+  if (!cursorEl) {
+    return;
+  }
+
+  const cursorImage = document.getElementById("custom-cursor-image");
+  if (cursorImage && cursorImage.getAttribute("src") !== customCursorAsset) {
+    cursorImage.src = customCursorAsset;
+  }
+
+  window.addEventListener("pointerdown", handleCustomCursorPointerDown, { passive: true });
+  window.addEventListener("pointermove", handleCustomCursorPointerMove, { passive: true });
+  window.addEventListener("pointerup", handleCustomCursorPointerEnd, { passive: true });
+  window.addEventListener("pointercancel", handleCustomCursorPointerEnd, { passive: true });
+  window.addEventListener("blur", () => hideCustomCursor());
+}
+
 function attachEventListeners() {
   if (!dom?.board) {
     return;
@@ -1392,6 +1596,7 @@ function attachEventListeners() {
   dom.board.addEventListener("pointermove", handlePointerMove);
   dom.board.addEventListener("pointerup", handlePointerUp);
   dom.board.addEventListener("pointercancel", handlePointerCancel);
+  attachCustomCursorListeners();
   const restartHandler = () => {
     const previousSeed = gameState.currentSeed;
     restartGame();
