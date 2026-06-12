@@ -656,12 +656,16 @@ body.is-dragging-cursor * {
 }
 
 .game-over {
-  position: relative;
-  z-index: 20;
-  width: min(100%, 360px);
-  padding: 18px 18px 16px;
-  border-radius: 22px;
-  background: rgba(255, 247, 220, 0.96);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1.8);
+  transform-origin: center center;
+  z-index: 200;
+  width: min(92vw, 420px);
+  padding: 28px 28px 24px;
+  border-radius: 28px;
+  background: rgba(255, 247, 220, 0.98);
   border: 2px solid rgba(191, 126, 36, 0.24);
   box-shadow: var(--shadow-soft);
   text-align: center;
@@ -715,7 +719,8 @@ body.is-dragging-cursor * {
 @keyframes tile-shake {
   0%,
   100% {
-    transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(1.8);
+  transform-origin: center center;
   }
   20% {
     transform: translate(calc(-50% - 4px), calc(-50% + 1px));
