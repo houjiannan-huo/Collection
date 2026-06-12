@@ -319,12 +319,39 @@ body::before {
   width: 112px;
   height: 124px;
   transform: translate(-50%, -50%);
+  perspective: 700px;
   border: 0;
   padding: 0;
   background: transparent;
   cursor: pointer;
   touch-action: none;
   overflow: visible;
+}
+
+/* 翻面动效：解锁瞬间从未知面翻向真实地块 */
+.tile--flipping .tile__inner {
+  transform-style: preserve-3d;
+  animation: tile-flip-reveal 0.26s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.tile--flipping .tile__face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.tile--flipping .tile__face--back {
+  transform: rotateY(180deg);
+}
+
+@keyframes tile-flip-reveal {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(180deg);
+  }
 }
 
 .tile--start {
@@ -728,8 +755,7 @@ body.is-dragging-cursor * {
 @keyframes tile-shake {
   0%,
   100% {
-  transform: translate(-50%, -50%) scale(1.8);
-  transform-origin: center center;
+    transform: translate(-50%, -50%);
   }
   20% {
     transform: translate(calc(-50% - 4px), calc(-50% + 1px));

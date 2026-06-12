@@ -30,6 +30,7 @@ const animationDurations = {
   startPulse: 800,
   honeyPulse: 480,
   toast: 1400,
+  tileFlip: 260,
 };
 const tileAssetMap = {
   hidden: "./assets/tiles/tile-unknown.png",
@@ -312,6 +313,7 @@ function createInitialGameState(options = {}) {
     isFailFlash: false,
     invalidFlashTileIds: [],
     shakeTileIds: [],
+    flipTileIds: [],
     toastMessage: "",
     toastTone: "",
     totalHoneyPulse: false,
@@ -1300,7 +1302,20 @@ function setTileRevealed(tileId) {
   tileState.revealed = true;
   tileState.unlocked = true;
   gameState.revealedTiles.add(tileId);
+  if (!wasRevealed) {
+    triggerTileFlip(tileId);
+  }
   return !wasRevealed;
+}
+
+function triggerTileFlip(tileId) {
+  if (!gameState.flipTileIds.includes(tileId)) {
+    gameState.flipTileIds = [...gameState.flipTileIds, tileId];
+  }
+  scheduleFeedback(() => {
+    gameState.flipTileIds = gameState.flipTileIds.filter((id) => id !== tileId);
+    triggerRenderOnly();
+  }, animationDurations.tileFlip);
 }
 
 function isSafeTileType(type) {
@@ -1485,6 +1500,7 @@ function createTileElement(tile) {
   const isShaking = gameState.shakeTileIds.includes(tile.id);
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
   const isStartPulse = tile.id === gameState.startPulseTileId;
+  const isFlipping = gameState.flipTileIds.includes(tile.id);
   const isStartCandidate = !gameState.isDragging && !gameState.isGameOver && isValidStartCandidate(tile.id);
   const visibleDangerCount = getVisibleDangerCount(tile.id);
   const tileAsset = getTileAsset(state);
@@ -1506,6 +1522,7 @@ function createTileElement(tile) {
     isInPath ? "tile--path" : "",
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
+    isFlipping ? "tile--flipping" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -1532,11 +1549,20 @@ function createTileElement(tile) {
     `${tile.id}，${isStartCandidate ? "可作为起点，" : ""}${ariaState}${isInPath ? "，已在当前路径中" : ""}`
   );
 
+  const innerInnerHtml = isFlipping
+    ? `
+      <span class="tile__face tile__face--front" aria-hidden="true">
+        <img class="tile__image" src="${tileAssetMap.hidden}" alt="" />
+      </span>
+      <span class="tile__face tile__face--back" aria-hidden="true">
+        <img class="tile__image" src="${tileAsset}" alt="" />
+      </span>
+    `
+    : `<img class="tile__image" src="${tileAsset}" alt="" />`;
+
   button.innerHTML = `
     <span class="tile__ring" aria-hidden="true"></span>
-    <span class="tile__inner" aria-hidden="true">
-      <img class="tile__image" src="${tileAsset}" alt="" />
-    </span>
+    <span class="tile__inner" aria-hidden="true">${innerInnerHtml}</span>
     <span class="tile__label">${tile.id}</span>
     ${
       visibleDangerCount === null
