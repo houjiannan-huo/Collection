@@ -1,3 +1,6 @@
+const totalTileCount = 19;
+const lockedDangerPreviewCount = 3;
+
 const layoutRows = [2, 2, 3, 3, 3, 3, 2, 1];
 const rowTileIds = [
   ["T01", "T02"],
@@ -124,7 +127,12 @@ function validateLayoutConfig() {
   const uniqueTileCount = new Set(allTileIds).size;
   const expectedTotal = Object.values(tileTypeCounts).reduce((sum, count) => sum + count, 0);
 
-  if (!rowCountMatches || !everyRowMatches || totalTiles !== 19 || uniqueTileCount !== 19) {
+  if (
+    !rowCountMatches ||
+    !everyRowMatches ||
+    totalTiles !== totalTileCount ||
+    uniqueTileCount !== totalTileCount
+  ) {
     throw new Error("固定盘面配置非法，请检查 layoutRows / rowTileIds / rowSlots");
   }
 
@@ -132,7 +140,7 @@ function validateLayoutConfig() {
     throw new Error("固定起点不存在于盘面配置中");
   }
 
-  if (expectedTotal !== 19) {
+  if (expectedTotal !== totalTileCount) {
     throw new Error("格子内容数量配置非法，请检查 enemy / flower / empty 总数");
   }
 }
@@ -1329,14 +1337,82 @@ function hasRevealedNeighbor(tileId) {
   return adjacencyMap[tileId].some((neighborId) => gameState.tileStateMap[neighborId].revealed);
 }
 
+function getRevealedNeighborCount(tileId) {
+  return adjacencyMap[tileId].filter((neighborId) => gameState.tileStateMap[neighborId].revealed).length;
+}
+
+function getTileDistance(fromTileId, toTileId) {
+  if (!fromTileId || !toTileId) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (fromTileId === toTileId) {
+    return 0;
+  }
+
+  const queue = [[fromTileId, 0]];
+  const visited = new Set([fromTileId]);
+
+  while (queue.length > 0) {
+    const [currentTileId, distance] = queue.shift();
+
+    for (const neighborId of adjacencyMap[currentTileId]) {
+      if (visited.has(neighborId)) {
+        continue;
+      }
+
+      const nextDistance = distance + 1;
+      if (neighborId === toTileId) {
+        return nextDistance;
+      }
+
+      visited.add(neighborId);
+      queue.push([neighborId, nextDistance]);
+    }
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
+
+function getLockedDangerPreviewTileIds() {
+  const focusTileId = gameState.isDragging ? getCurrentTileId() : getDisplayStartTileId();
+
+  return tiles
+    .map((tile) => gameState.tileStateMap[tile.id])
+    .filter((tileState) => !tileState.revealed && hasRevealedNeighbor(tileState.id))
+    .sort((left, right) => {
+      const distanceDelta =
+        getTileDistance(focusTileId, left.id) - getTileDistance(focusTileId, right.id);
+
+      if (distanceDelta !== 0) {
+        return distanceDelta;
+      }
+
+      const revealedNeighborDelta =
+        getRevealedNeighborCount(right.id) - getRevealedNeighborCount(left.id);
+
+      if (revealedNeighborDelta !== 0) {
+        return revealedNeighborDelta;
+      }
+
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, lockedDangerPreviewCount)
+    .map((tileState) => tileState.id);
+}
+
+function getVisibleTileIds() {
+  return new Set([...gameState.revealedTiles, ...getLockedDangerPreviewTileIds()]);
+}
+
 function getVisibleDangerCount(tileId) {
   const state = gameState.tileStateMap[tileId];
 
-  if (state.revealed || !hasRevealedNeighbor(tileId)) {
+  if (state.revealed) {
     return null;
   }
 
-  return state.dangerCount;
+  return getLockedDangerPreviewTileIds().includes(tileId) ? state.dangerCount : null;
 }
 
 function computeBoardSize() {
@@ -1707,12 +1783,17 @@ function renderBoard() {
     return;
   }
 
+  const visibleTileIds = getVisibleTileIds();
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
   dom.board.innerHTML = "";
   const fragment = document.createDocumentFragment();
 
   tiles.forEach((tile) => {
+    if (!visibleTileIds.has(tile.id)) {
+      return;
+    }
+
     fragment.appendChild(createTileElement(tile));
   });
 
