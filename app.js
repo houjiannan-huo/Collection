@@ -2205,6 +2205,8 @@ function extendRun(tileId) {
 
   const tileState = gameState.tileStateMap[tileId];
   const wasRevealed = tileState.revealed;
+  // 本轮“首访”判定：在写入 currentRunVisitedTileIds 之前抓，用来闸住体力扣减
+  const isFirstVisitThisRun = !gameState.currentRunVisitedTileIds.has(tileId);
   gameState.currentPath.push(tileId);
   gameState.currentRunVisitedTileIds.add(tileId);
 
@@ -2236,21 +2238,24 @@ function extendRun(tileId) {
   } else if (tileState.type === "flower") {
     // 本轮已经采过这朵花：算路过，不加蜜、不放飞花、不连击；下一轮新蜜蜂才会重新可采
     gameState.statusText = `路过本轮已采花格 ${tileId}。`;
-  } else if (!wasRevealed) {
+  } else if (isFirstVisitThisRun) {
     gameState.statusText = `进入新安全格 ${tileId}。`;
   } else {
-    gameState.statusText = `经过已采集安全格 ${tileId}。`;
+    gameState.statusText = `路过本轮已走过的安全格 ${tileId}。`;
   }
 
   playTileRevealSound();
 
-  // 体力消耗：进入任意安全格（flower / empty）都扣 1 格体力
-  gameState.beeStamina = Math.max(0, gameState.beeStamina - 1);
-  const justExhausted = gameState.beeStamina === 0 && !gameState.beeStaminaExhausted;
-  if (gameState.beeStamina === 0) {
-    gameState.beeStaminaExhausted = true;
+  // 体力消耗：仅在“本轮第一次踩到这个地块”时扣 1 格体力；同轮复访免费
+  let justExhausted = false;
+  if (isFirstVisitThisRun) {
+    gameState.beeStamina = Math.max(0, gameState.beeStamina - 1);
+    justExhausted = gameState.beeStamina === 0 && !gameState.beeStaminaExhausted;
+    if (gameState.beeStamina === 0) {
+      gameState.beeStaminaExhausted = true;
+    }
+    syncBeeStaminaFromState();
   }
-  syncBeeStaminaFromState();
 
   logEvent("路径加入格子", {
     tileId,
@@ -2258,6 +2263,7 @@ function extendRun(tileId) {
     path: [...gameState.currentPath],
     currentRunHoney: gameState.currentRunHoney,
     beeStamina: gameState.beeStamina,
+    isFirstVisitThisRun,
   });
 
   renderAll();

@@ -330,6 +330,33 @@
   - R2 新蜜蜂同一朵 T17：可再次 +1，跨轮规则正常
 - 代码级确认：天敌分支不受影响，仍走原失败结算
 
+## 本轮新增修复：同轮复访老地块仍在消耗蜜蜂体力
+### 复现条件
+- 同一只蜜蜂（一轮）里，进入新地块会扣 1 格体力
+- 但绕回本轮已走过的地块（起点 / 花格 / 安全格）时，体力仍然继续 -1
+- 本应只为“本轮首访的地块”买单
+
+### 根因判断
+- `extendRun()` 安全分支末尾的体力扣减无条件执行：`gameState.beeStamina = Math.max(0, gameState.beeStamina - 1)`
+- 这条扣减没有“本轮首访”闸门
+- 花蜜分支早前已做去重（`currentRunHarvestedTileIds`），但体力链路没同步更新
+
+### 已执行修复
+- 在 `extendRun()` 顶部、`currentRunVisitedTileIds.add()` 之前抓 `isFirstVisitThisRun`
+- 体力扣减、耗尽判定、`syncBeeStaminaFromState()`、`completeRun("success")` 自动结算全部用 `isFirstVisitThisRun` 闸住
+- 同轮复访路径继续：`playTileRevealSound()` 照常播一声手感反馈，仅文案区分
+- empty 复访文案从 `经过已采集安全格 X。` 改成 `路过本轮已走过的安全格 X。`，与“本轮首访”闸门口径对齐
+- flower 首访/复访、enemy 失败结算分支均不动
+
+### 本轮改了哪些文件
+- `app.js`
+- `index.html`（缓存版本 → `stamina-firstvisit-20260614-1`）
+- `B-FIX.md`
+
+### 最小验证
+- `node --check app.js` 通过
+- Node 沙盒：T18 起手 stamina 7，T17(首)→6，T15(首)→5，T17(复访)→5，T18(复访)→5，T17(再复访)→5；花蜜仍为 2，文案在复访时正确切到“路过…”
+
 ## 给 B-COD 的提醒
 - 不要继续在 `.tile__inner` 上叠加旧占位风格描边
 - 不要再用 `background` 简写覆盖贴图
