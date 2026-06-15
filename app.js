@@ -469,6 +469,7 @@ const dom = hasDom
       roundHoney: document.getElementById("round-honey"),
       roundHoneyCard: document.getElementById("round-honey-card"),
       beesLeft: document.getElementById("bees-left"),
+      beeCounterIcon: document.getElementById("bee-counter-icon"),
       statusText: document.getElementById("status-text"),
       toast: document.getElementById("toast"),
       gameOver: document.getElementById("game-over"),
@@ -1990,7 +1991,17 @@ function renderHud() {
   } else {
     renderRoundHoneyValue(gameState.roundHoney);
   }
-  dom.beesLeft.textContent = String(gameState.remainingBees);
+  const prevDisplayedBees = Number(dom.beesLeft.dataset.value);
+  const nextBees = gameState.remainingBees;
+  dom.beesLeft.textContent = String(nextBees);
+  dom.beesLeft.dataset.value = String(nextBees);
+  if (Number.isFinite(prevDisplayedBees) && nextBees < prevDisplayedBees && dom.beeCounterIcon) {
+    const icon = dom.beeCounterIcon;
+    icon.classList.remove("bee-counter__icon--jump");
+    // 强制重排以重启动画
+    void icon.offsetWidth;
+    icon.classList.add("bee-counter__icon--jump");
+  }
 
   dom.totalHoney.closest(".hud-card")?.classList.toggle("hud-card--pulse", gameState.totalHoneyPulse);
 

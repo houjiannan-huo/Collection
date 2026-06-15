@@ -169,8 +169,7 @@ body::before {
   gap: 10px;
 }
 
-.hud-card,
-.bee-counter {
+.hud-card {
   background: var(--panel);
   border: 2px solid var(--panel-border);
   border-radius: 22px;
@@ -253,24 +252,14 @@ body::before {
   animation: hud-collect-burst 0.34s ease-out;
 }
 
-.hud-label,
-.bee-counter__label {
+.hud-label {
   font-size: 13px;
   color: var(--text-sub);
 }
 
-.hud-card strong,
-.bee-counter strong {
+.hud-card strong {
   font-size: 28px;
   line-height: 1;
-}
-
-.bee-counter__label {
-  font-size: 24px;
-}
-
-.bee-counter strong {
-  font-size: 50px;
 }
 
 .board-panel {
@@ -862,12 +851,86 @@ body.is-dragging-cursor * {
 
 .bee-counter {
   position: absolute;
-  right: 0;
+  right: -32px;
   bottom: 0;
-  width: min(252px, 100%);
-  padding: 21px 27px;
-  text-align: center;
+  width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
   z-index: 10;
+  pointer-events: none;
+  transform: scale(1.15);
+  transform-origin: bottom right;
+}
+
+.bee-counter__frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1.35;
+  background: url("assets/ui/beeframe_01.png") no-repeat center/100% 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.bee-counter__icon {
+  width: 124.9%;
+  height: auto;
+  margin-top: -8%;
+  transform: translate(5px, -40px);
+  transform-origin: 50% 100%;
+  image-rendering: -webkit-optimize-contrast;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bee-counter__number {
+  position: relative;
+  width: 78%;
+  aspect-ratio: 1 / 0.42;
+  margin-top: -34%;
+  transform: translateY(-44px) scale(1.09);
+  background: url("assets/ui/beeframe_number_01.png") no-repeat center/100% 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bee-counter__number strong {
+  font-size: 27.3px;
+  line-height: 1;
+  color: #2f2a3a;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.bee-counter__number strong::before {
+  content: "x";
+  font-size: 0.95em;
+  margin-right: 1px;
+}
+
+.bee-counter__icon--jump {
+  animation: bee-counter-jump 0.48s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes bee-counter-jump {
+  0% {
+    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+  }
+  15% {
+    transform: translate(5px, -36px) scaleY(0.82) scaleX(1.12);
+  }
+  45% {
+    transform: translate(5px, -72px) scaleY(1.08) scaleX(0.94);
+  }
+  75% {
+    transform: translate(5px, -40px) scaleY(0.9) scaleX(1.08);
+  }
+  100% {
+    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+  }
 }
 
 @keyframes board-fail-flash {
@@ -1118,6 +1181,10 @@ body.is-dragging-cursor * {
   .bee-counter {
     right: 10px;
     bottom: env(safe-area-inset-bottom, 0px);
-    width: 222px;
+    width: 120px;
+  }
+
+  .bee-counter__number strong {
+    font-size: 23.1px;
   }
 }
