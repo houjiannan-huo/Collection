@@ -463,6 +463,16 @@ body::before {
   transform-origin: top center;
 }
 
+.tile__image--apple-tree {
+  z-index: 2;
+  width: 88%;
+  height: 88%;
+  inset: calc(4% - 16px) auto auto 50%;
+  transform: translateX(-50%);
+  object-fit: contain;
+  transform-origin: center;
+}
+
 .tile__image--enemy {
   z-index: 2;
   width: 62%;

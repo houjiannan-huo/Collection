@@ -1,13 +1,38 @@
 # B-COD 记录
 
 ## Claim
-- 任务 ID：UI-BEE-STAMINA-01
-- 当前 claim：模块《自定义蜜蜂光标体力环 + 单轮采集格数上限》
-- 范围：在 `#custom-cursor` 内追加 SVG 体力环 DOM、新增 `beeStaminaConfig / gameState.beeStamina`、在 `beginRun() / extendRun()` 上接入扣减与自动结算；不改格子数据结构、不改飞花/Combo/BGM 链路、不改天敌触发逻辑
+- 任务 ID：B-COD-APPLE-TREE-01
+- 当前 claim：模块《单独接入苹果果树地块》
+- 范围：仅接入 `apple_tree` 类型、`blossom / fruit / harvested` 三态显示、`blossom` 采集 `+3 花蜜`、以及“下一回合开始时 `fruit -> harvested`”流转；不接入 `bee / orange_tree / tulip`，不改敌人逻辑，不改基础拖拽路径规则，不做新动效
+- 备注：原 `UI-BEE-STAMINA-01` 相关实现已在下方实现记录保留；本轮按新任务卡切到 `apple_tree` 模块
 - 历史 claim 已闭环：`ART-TILE-ENEMY-01`（天敌格子双层资源叠加显示）
 - 历史 claim 已闭环：`B-COD-DEMO-FEEDBACK-001`（花朵采集反馈）、`B-COD-DEMO-FEEDBACK-002`（自定义光标）、`B-COD-DEMO-FEEDBACK-002-A`（光标资源接入）、`SFX-01`（翻格音效）、`SFX-02`（撞天敌音效）、`FX-01`（采集范围高亮）、`B-COD-DEMO-AUDIO-001`（主背景 BGM 接入）、`FX-02`（起点格子强化标识）、`RULE-01`（取消起点继承 + 自由选择起点）、`RULE-02`（蜜蜂消耗保护机制）、`RULE-03 / FX-03`（删除固定起点 UI + 非法点击反馈）
 
 ## 实现记录
+- 本轮新增 `apple_tree` 地块类型，并把默认随机分布调整为 `enemy:3 / flower:9 / apple_tree:1 / empty:6`，确保正常开局即可生成苹果果树地块
+- 新增 `appleTreeStateAssetMap` 与 `tileState.growthStage`；苹果果树统一走 `blossom / fruit / harvested` 三态，初始化默认 `blossom`
+- `getTileVisualMarkup()` 现对 `apple_tree` 复用安全格双层结构：底图固定 `tile-empty.png`，前景按 `growthStage` 切到 `apple_tree_blossom_01.png / apple_tree_fruit_01.png / apple_tree_harvested_01.png`
+- `isSafeTileType()` / `isValidStartCandidate()` 已纳入 `apple_tree`，保证苹果果树在解锁后仍可作为安全路径格与起点候选
+- `extendRun()` 已接入苹果果树收益：仅 `blossom` 被采集时 `+3` 花蜜，并立即把 `growthStage` 切到 `fruit`；`fruit / harvested` 只路过不再重复给收益
+- 新增 `advanceAppleTreeStatesForNextRound()`，并在 `beginRun()` 这个“下一回合开始”的统一入口调用：所有 `fruit` 苹果果树会在新一轮开始时自动切到 `harvested`
+- 视觉规则修正：苹果果树被翻开的瞬间必须永远显示 `blossom`，不能直接显示 `fruit / harvested`
+  - 新增 `tileState.pendingFruit` 标志位，初始为 `false`
+  - `extendRun()` 采集 `blossom` 时 `+3` 花蜜，但 `growthStage` 不再立即切到 `fruit`，改为把 `pendingFruit = true`，视觉本轮保持 `blossom`
+  - `advanceAppleTreeStatesForNextRound()` 现在同时处理：`fruit -> harvested`，以及 `blossom + pendingFruit -> fruit`（并清 `pendingFruit`）
+  - 同回合再次踩到已采苹果果树：视觉仍是 `blossom`，但不会再次 `+3`
+- 苹果果树循环规则：`fruit` 阶段持续两个回合后变 `harvested`；`harvested` 被路过后下一回合重新开花
+  - 新增 `tileState.fruitRoundCount` 与 `tileState.pendingReBloom`，初始均为 `0 / false`
+  - `extendRun()` 中踩到 `harvested` 不再单纯路过，会把 `pendingReBloom = true`，视觉本轮仍是 `harvested`
+  - `advanceAppleTreeStatesForNextRound()` 阶段推进规则：
+    - `harvested + pendingReBloom` → `blossom`（并清 `pendingReBloom / pendingFruit / fruitRoundCount`）
+    - `fruit` 第 1 回合 → 继续 `fruit`，`fruitRoundCount` 加到 2
+    - `fruit` 第 2 回合 → `harvested`
+    - `blossom + pendingFruit` → `fruit`，`fruitRoundCount = 1`
+- `createTileElement()` 新增 `data-growth-stage`（仅 revealed 时写入），便于人工检查三态切换且不泄露未解锁真实类型
+- 按最新视觉要求，`.tile__image--apple-tree` 已累计统一上移 `22px`（本轮追加上移 `10px`），三态切图共用同一定位规则
+- 按最新视觉要求，苹果树三态前景图尺寸最终调整为 `88%`，`.tile__image--apple-tree` 当前为 `width/height = 88%`
+- 按最新视觉要求，苹果树三态切图在累计上移 `22px` 的基础上回调下移 `6px`，当前等效为整体上移 `16px`
+- `index.html` 中 `app.js / style.css` 资源版本号已升级到 `apple-tree-20260614-1`，避免浏览器缓存旧脚本/样式
 - 本轮新增 `beeStaminaConfig = { maxPerRun: 8, countStartTile: true }`，单点维护“一只蜜蜂单轮采集格数上限”与“起点是否算 1 格”
 - `gameState` 新增 `beeStamina / beeStaminaExhausted`，按轮维护当前蜜蜂体力与耗尽态
 - 新增 `setBeeStaminaDisplay(ratio, exhausted)` / `syncBeeStaminaFromState()`：把游戏态投射到 `#custom-cursor` 的 `--bee-stamina` 与 `.custom-cursor--exhausted` 类
@@ -131,6 +156,11 @@
 ## 接口登记
 - 无外部接口
 - 运行方式：直接打开 `index.html`
+- 苹果果树状态字段：`tileState.growthStage`（`blossom | fruit | harvested | null`）
+- 苹果果树状态推进入口：`advanceAppleTreeStatesForNextRound()`（位于 `app.js`，在 `beginRun()` 开始时统一调用）
+- 苹果果树资源入口：`appleTreeStateAssetMap`（位于 `app.js`）
+- 苹果果树前景样式入口：`.tile__image--apple-tree`（位于 `style.css`）
+- 调试观察：revealed 苹果果树 DOM 会写入 `data-growth-stage`，可直接检查当前三态
 - 后续可直接复用的数据入口：`window.demoBoard.tiles`、`window.demoBoard.adjacencyMap`、`window.demoBoard.gameState`
 - 内容调试入口：`window.demoBoard.contentSummary`、`window.demoBoard.tileStateMap`
 - 交互调试入口：`window.demoBoard.beginRun(tileId)`、`window.demoBoard.extendRun(tileId)`、`window.demoBoard.endRun()`、`window.demoBoard.resetGame({ typeMap })`
@@ -180,6 +210,11 @@
 
 ## 验证记录
 - 已做:
+  0. 苹果果树接入后执行 `node --check app.js`，语法通过
+  0. 代码级确认：默认随机分布现包含 1 个 `apple_tree`，满足“可生成并显示 apple_tree 地块”
+  0. 代码级确认：`apple_tree` 初始化 `growthStage="blossom"`，revealed 后显示 `tile-empty + apple_tree_blossom_01`
+  0. 代码级确认：`extendRun()` 中仅 `blossom` 分支会 `+3` 花蜜并切到 `fruit`；`fruit / harvested` 分支不会重复加蜜
+  0. 代码级确认：`beginRun()` 开头统一调用 `advanceAppleTreeStatesForNextRound()`，保证 `fruit -> harvested` 只发生在下一回合开始时
   0. 接入体力环 + 单轮采集格数上限后再次执行 `node --check app.js`，语法通过
   0. 代码级确认：`beginRun()` 重置 `beeStamina = 8`，若 `countStartTile=true` 同步扣 1
   0. 代码级确认：`extendRun()` 的安全分支每次推进路径都会扣 1 格体力，且体力归 0 时立即触发 `completeRun("success")`
@@ -230,10 +265,16 @@
    27. 接入 RULE-03 / FX-03 后再次执行 `node --check app.js`，语法通过；固定起点文案/描边/常驻跟随物已移除，新增非法点击红闪与预留音效接口
    28. 接入 `B-COD-DEMO-FEEDBACK-003` Combo System 后再次执行 `node --check app.js`，语法通过；Combo 现按“每采到一朵花 +1”触发，`empty` / `enemy` 不会误加；重开会立即清空，其余由 2.5 秒超时自然结束
 - 未做：浏览器人工打开验收
-- 未验证原因：当前会话未启动浏览器进行视觉检查，也无法在此直接录屏；尚未人工确认 Combo 浮层是否严格跟随“最新采花格”、强化档表现、2.5 秒上浮渐隐、音效节流，以及与飞花 / 光标 / BGM 的叠加观感
+- 未验证原因：当前会话未启动浏览器进行视觉检查，也无法在此直接录屏；尚未人工确认苹果果树 `blossom / fruit / harvested` 三态图片是否完全居中、与翻牌/路径高亮/失败态是否存在遮挡，同时 Combo 浮层等旧功能也未做本轮实机回归
 - 建议验证步骤：
-  1. 直接打开 `index.html`
-  2. 连续滑过 3~5 个花朵格，确认飞花按约 0.08 秒错峰发射，形成连续 `Pupupu` 节奏
+   - 苹果专项 1：直接打开 `index.html`，强刷确认已加载 `apple-tree-20260614-1` 版本资源
+   - 苹果专项 2：通过正常开局或 `window.demoBoard.resetGame({ typeMap })` 确认盘面可出现 `apple_tree`
+   - 苹果专项 3：进入 `apple_tree blossom` 时确认本轮暂存立即 `+3`，且前景图立刻切成 `apple_tree_fruit_01.png`
+   - 苹果专项 4：结束本轮后，再次按下开始下一轮，确认所有 `fruit` 苹果果树会在这一刻切成 `apple_tree_harvested_01.png`
+   - 苹果专项 5：再次经过 `fruit / harvested` 苹果果树，确认不会重复增加 3 花蜜
+   - 苹果专项 6：观察三态图在普通 revealed、翻牌、路径高亮、失败闪烁下是否都居中且未被遮挡
+   1. 直接打开 `index.html`
+   2. 连续滑过 3~5 个花朵格，确认飞花按约 0.08 秒错峰发射，形成连续 `Pupupu` 节奏
   3. 观察飞花是否从格子中心偏上位置出生、先轻微 pop，再沿弧线吸附到 `本轮暂存` 整体卡片
   4. 确认每朵到达时 `本轮暂存` 卡片都会弹一下、出现中心吸附 burst，并播放一次短促收集音
   5. 确认 `本轮暂存` 数字按到达节奏连续滚动递增，多朵衔接时不抖碎、不回退
@@ -258,6 +299,7 @@
    24. 反复进入/结束 Combo，并切换标签页再回来，确认状态不残留、位置不乱跳
 
 ## 协作需求
+- 本模块 `B-COD-APPLE-TREE-01` 默认可交给 `B-FIX` 做苹果果树专项回归：重点确认三态资源居中、`blossom -> fruit -> harvested` 切换时机、以及 `fruit / harvested` 无重复收益
 - 本模块 M1 已可交给 `B-FIX` 做视觉回归，重点检查：花层居中、透明边、翻牌前后、路径高亮 / 起点 / 失败状态是否遮挡前景花层
 - 默认可交给 `B-FIX` 做浏览器实机回归：Combo 浮层跟随最新采花格、强化档视觉、2.5 秒结束渐隐、音效节流，以及与飞花 / 自定义光标 / BGM 的并存观感
 - 本模块完成后建议回流 `@A-PLN` 做阶段收口；若先做人眼验收，也可先交 `A-ASK` / 用户按上方步骤检查，再决定是否补第二轮爽感优化

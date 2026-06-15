@@ -1,10 +1,11 @@
 const lockedDangerPreviewCount = 3;
 const tileTypeRatioBaseCounts = {
   enemy: 3,
-  flower: 10,
+  flower: 9,
+  apple_tree: 1,
   empty: 6,
 };
-const tileTypeOrder = ["enemy", "flower", "empty"];
+const tileTypeOrder = ["enemy", "flower", "apple_tree", "empty"];
 
 const layoutRows = [2, 2, 3, 3, 3, 3, 2, 1];
 const rowTileIds = [
@@ -53,6 +54,7 @@ const tileAssetMap = {
   empty: "./assets/tiles/tile-empty.png",
   enemy: "./assets/tiles/tile-enemy.png?v=enemy-20260613-1",
   flower: "./assets/tiles/tile-flower.png",
+  apple_tree: "./assets/tiles/tile-empty.png",
 };
 const threatEdgeAssetMap = {
   left: "./assets/tiles/tile-edge-left.png",
@@ -63,6 +65,11 @@ const threatEdgeAssetMap = {
   "lower-right": "./assets/tiles/tile-edge-lower-right.png",
 };
 const flowerOverlayAsset = "./assets/tiles/flower_01.png";
+const appleTreeStateAssetMap = {
+  blossom: "./assets/tiles/apple_tree_blossom_01.png",
+  fruit: "./assets/tiles/apple_tree_fruit_01.png",
+  harvested: "./assets/tiles/apple_tree_harvested_01.png",
+};
 const enemyOverlayAsset = "./assets/tiles/Bird_01.png?v=enemy-20260613-1";
 let enemyOverlayDisplayAsset = enemyOverlayAsset;
 const collectFeedbackConfig = {
@@ -107,6 +114,15 @@ const boardDisplayScale = 1.7;
 
 const hasDom = typeof document !== "undefined";
 
+function createTileTypeSummary() {
+  return {
+    enemy: 0,
+    flower: 0,
+    apple_tree: 0,
+    empty: 0,
+  };
+}
+
 function generateSeed() {
   return Math.floor(Math.random() * 0xffffffff);
 }
@@ -142,7 +158,7 @@ function calculateTileTypeCounts(totalTiles) {
   }
 
   const baseTotal = Object.values(tileTypeRatioBaseCounts).reduce((sum, count) => sum + count, 0);
-  const counts = { enemy: 0, flower: 0, empty: 0 };
+  const counts = createTileTypeSummary();
   const allocations = tileTypeOrder.map((type) => {
     const rawCount = (tileTypeRatioBaseCounts[type] / baseTotal) * totalTiles;
     const flooredCount = Math.floor(rawCount);
@@ -252,7 +268,11 @@ function assignRandomTileTypes(randomFn = Math.random) {
   const allTileIds = tiles.map((tile) => tile.id);
   const enemyCandidates = allTileIds.filter((id) => id !== startTileId);
   const enemyIds = new Set(shuffleArray(enemyCandidates, randomFn).slice(0, tileTypeCounts.enemy));
-  const flowerCandidates = allTileIds.filter((id) => !enemyIds.has(id));
+  const safeCandidates = allTileIds.filter((id) => !enemyIds.has(id));
+  const appleTreeIds = new Set(
+    shuffleArray(safeCandidates, randomFn).slice(0, tileTypeCounts.apple_tree)
+  );
+  const flowerCandidates = safeCandidates.filter((id) => !appleTreeIds.has(id));
   const flowerIds = new Set(
     shuffleArray(flowerCandidates, randomFn).slice(0, tileTypeCounts.flower)
   );
@@ -265,6 +285,10 @@ function assignRandomTileTypes(randomFn = Math.random) {
 
       if (flowerIds.has(id)) {
         return [id, "flower"];
+      }
+
+      if (appleTreeIds.has(id)) {
+        return [id, "apple_tree"];
       }
 
       return [id, "empty"];
@@ -290,16 +314,17 @@ function validateTypeMap(typeMap) {
       result[type] += 1;
       return result;
     },
-    { enemy: 0, flower: 0, empty: 0 }
+    createTileTypeSummary()
   );
 
   if (
     summary.enemy !== tileTypeCounts.enemy ||
     summary.flower !== tileTypeCounts.flower ||
+    summary.apple_tree !== tileTypeCounts.apple_tree ||
     summary.empty !== tileTypeCounts.empty
   ) {
     throw new Error(
-      `自定义 typeMap 不满足当前数量约束：enemy ${tileTypeCounts.enemy} / flower ${tileTypeCounts.flower} / empty ${tileTypeCounts.empty}`
+      `自定义 typeMap 不满足当前数量约束：enemy ${tileTypeCounts.enemy} / flower ${tileTypeCounts.flower} / apple_tree ${tileTypeCounts.apple_tree} / empty ${tileTypeCounts.empty}`
     );
   }
 
@@ -320,8 +345,12 @@ function summarizeTileTypes(tileStateMap) {
       summary[tileState.type] += 1;
       return summary;
     },
-    { enemy: 0, flower: 0, empty: 0 }
+    createTileTypeSummary()
   );
+}
+
+function getInitialGrowthStage(type) {
+  return type === "apple_tree" ? "blossom" : null;
 }
 
 function buildTypeMap(options = {}) {
@@ -360,6 +389,10 @@ function createInitialGameState(options = {}) {
           col: tile.col,
           slotX: tile.slotX,
           type,
+          growthStage: getInitialGrowthStage(type),
+          pendingFruit: false,
+          fruitRoundCount: 0,
+          pendingReBloom: false,
           revealed,
           unlocked: revealed,
           dangerCount: getDangerCount(tile.id, typeMap),
@@ -1410,7 +1443,15 @@ function triggerTileFlip(tileId) {
 }
 
 function isSafeTileType(type) {
-  return type === "flower" || type === "empty";
+  return type === "flower" || type === "apple_tree" || type === "empty";
+}
+
+function getAppleTreeGrowthStage(tileState) {
+  if (tileState?.type !== "apple_tree") {
+    return null;
+  }
+
+  return appleTreeStateAssetMap[tileState.growthStage] ? tileState.growthStage : "blossom";
 }
 
 function hasRevealedNeighbor(tileId) {
@@ -1613,6 +1654,10 @@ function getTileTypeLabel(type) {
     return "小白花";
   }
 
+  if (type === "apple_tree") {
+    return "苹果果树";
+  }
+
   if (type === "empty") {
     return "安全空格";
   }
@@ -1626,6 +1671,19 @@ function getTileVisualType(tileState) {
 
 function getTileAsset(tileState) {
   return tileAssetMap[getTileVisualType(tileState)] ?? tileAssetMap.hidden;
+}
+
+function getSafeTileOverlayMarkup(tileState) {
+  if (tileState.type === "flower") {
+    return `<img class="tile__image tile__image--layer tile__image--flower" src="${flowerOverlayAsset}" alt="" />`;
+  }
+
+  if (tileState.type === "apple_tree") {
+    const growthStage = getAppleTreeGrowthStage(tileState);
+    return `<img class="tile__image tile__image--layer tile__image--apple-tree" src="${appleTreeStateAssetMap[growthStage]}" alt="" />`;
+  }
+
+  return "";
 }
 
 function clampColorChannel(value) {
@@ -1743,11 +1801,7 @@ function getTileVisualMarkup(tileState, fallbackAsset) {
               `<img class="tile__image tile__image--layer tile__image--threat-edge" src="${threatEdgeAssetMap[edge]}" alt="" />`
           )
           .join("")}
-        ${
-          tileState.type === "flower"
-            ? `<img class="tile__image tile__image--layer tile__image--flower" src="${flowerOverlayAsset}" alt="" />`
-            : ""
-        }
+        ${getSafeTileOverlayMarkup(tileState)}
       </span>
     `;
   }
@@ -1826,7 +1880,70 @@ function getCurrentTileId() {
 
 function isValidStartCandidate(tileId) {
   const tileState = gameState.tileStateMap[tileId];
-  return !!tileState && tileState.revealed && (tileState.type === "flower" || tileState.type === "empty");
+  return !!tileState && tileState.revealed && isSafeTileType(tileState.type);
+}
+
+function advanceAppleTreeStatesForNextRound() {
+  const blossomToFruit = [];
+  const fruitContinue = [];
+  const fruitToHarvested = [];
+  const harvestedToBlossom = [];
+
+  Object.values(gameState.tileStateMap).forEach((tileState) => {
+    if (tileState.type !== "apple_tree") {
+      return;
+    }
+
+    // harvested + 上一轮被路过过 → 重新开花
+    if (tileState.growthStage === "harvested" && tileState.pendingReBloom) {
+      tileState.growthStage = "blossom";
+      tileState.pendingReBloom = false;
+      tileState.pendingFruit = false;
+      tileState.fruitRoundCount = 0;
+      harvestedToBlossom.push(tileState.id);
+      return;
+    }
+
+    // fruit：累计回合数，满 2 个回合后切到 harvested
+    if (tileState.growthStage === "fruit") {
+      const currentCount = tileState.fruitRoundCount || 1;
+      if (currentCount >= 2) {
+        tileState.growthStage = "harvested";
+        tileState.fruitRoundCount = 0;
+        tileState.pendingFruit = false;
+        tileState.pendingReBloom = false;
+        fruitToHarvested.push(tileState.id);
+      } else {
+        tileState.fruitRoundCount = currentCount + 1;
+        fruitContinue.push(tileState.id);
+      }
+      return;
+    }
+
+    // blossom + 上一轮已采过 → 进入 fruit，开始计回合
+    if (tileState.growthStage === "blossom" && tileState.pendingFruit) {
+      tileState.growthStage = "fruit";
+      tileState.pendingFruit = false;
+      tileState.fruitRoundCount = 1;
+      blossomToFruit.push(tileState.id);
+    }
+  });
+
+  if (
+    blossomToFruit.length > 0 ||
+    fruitContinue.length > 0 ||
+    fruitToHarvested.length > 0 ||
+    harvestedToBlossom.length > 0
+  ) {
+    logEvent("下一回合开始，苹果果树推进阶段", {
+      blossomToFruit,
+      fruitContinue,
+      fruitToHarvested,
+      harvestedToBlossom,
+    });
+  }
+
+  return { blossomToFruit, fruitContinue, fruitToHarvested, harvestedToBlossom };
 }
 
 function getDisplayStartTileId() {
@@ -1963,6 +2080,7 @@ function createTileElement(tile, appearanceFrameMap = {}) {
   button.dataset.col = String(tile.col);
   button.dataset.slotX = String(tile.slotX);
   button.dataset.type = isRevealed ? state.type : "hidden";
+  button.dataset.growthStage = isRevealed ? state.growthStage ?? "" : "";
   button.dataset.revealed = String(isRevealed);
   button.dataset.dangerCount = String(state.dangerCount);
   button.dataset.visibleDangerCount = visibleDangerCount === null ? "" : String(visibleDangerCount);
@@ -2072,6 +2190,7 @@ function beginRun(tileId, pointerId = null) {
     return { ok: false, reason: "invalid-start" };
   }
 
+  advanceAppleTreeStatesForNextRound();
   resetCollectionFeedback({ resetRunToken: true, clearFlights: true, resetDisplay: true });
   primeCollectAudio();
   gameState.currentStartTileId = tileId;
@@ -2238,6 +2357,31 @@ function extendRun(tileId) {
   } else if (tileState.type === "flower") {
     // 本轮已经采过这朵花：算路过，不加蜜、不放飞花、不连击；下一轮新蜜蜂才会重新可采
     gameState.statusText = `路过本轮已采花格 ${tileId}。`;
+  } else if (
+    tileState.type === "apple_tree" &&
+    getAppleTreeGrowthStage(tileState) === "blossom" &&
+    !tileState.pendingFruit
+  ) {
+    // 翻开瞬间永远显示 blossom：这里只加蜜 + 标记 pendingFruit，growthStage 保持 blossom
+    tileState.pendingFruit = true;
+    gameState.currentRunHoney += 3;
+    if (hasDom && dom?.roundHoney) {
+      enqueueTempHoneyIncrement(3);
+    } else {
+      syncRoundHoney(gameState.currentRunHoney);
+    }
+    gameState.statusText = `采到苹果花：本轮暂存花蜜 ${gameState.currentRunHoney}。`;
+  } else if (tileState.type === "apple_tree" && getAppleTreeGrowthStage(tileState) === "blossom") {
+    // 同回合已采过这棵苹果树：视觉仍是 blossom，但不再加蜜
+    gameState.statusText = `路过本轮已采苹果果树 ${tileId}。`;
+  } else if (tileState.type === "apple_tree" && getAppleTreeGrowthStage(tileState) === "fruit") {
+    gameState.statusText = `路过结果中的苹果果树 ${tileId}。`;
+  } else if (tileState.type === "apple_tree") {
+    // harvested：本轮经过即标记 pendingReBloom，视觉本轮仍 harvested，下一回合开始时重新开花
+    if (!tileState.pendingReBloom) {
+      tileState.pendingReBloom = true;
+    }
+    gameState.statusText = `路过已采收的苹果果树 ${tileId}，下一回合将重新开花。`;
   } else if (isFirstVisitThisRun) {
     gameState.statusText = `进入新安全格 ${tileId}。`;
   } else {

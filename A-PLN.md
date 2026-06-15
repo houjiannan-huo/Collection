@@ -194,7 +194,8 @@
 2. 苹果果树地块
    - 类型建议：`apple_tree`
    - 前景切图：`apple_tree_blossom_01.png`
-   - 规则：未解锁时不暴露；解锁后默认处于开花阶段；采集可获得 3 朵花蜜
+   - 状态切图：`apple_tree_blossom_01.png` / `apple_tree_fruit_01.png` / `apple_tree_harvested_01.png`
+   - 规则：未解锁时不暴露；解锁后默认处于开花阶段；在 `blossom` 状态被采集时获得 3 朵花蜜，并流转到 `fruit` 状态；随后在**下一回合开始时**自动流转到 `harvested` 状态；底图始终复用 `tile-empty.png`
 
 3. 橘子果树地块
    - 类型建议：`orange_tree`
@@ -233,3 +234,75 @@
   - 检查解锁前隐藏、解锁后显示、采集后收益、计数重置/保留是否符合规则
   - 检查新前景图与路径高亮、翻牌动画、失败态不冲突
 - 验收：规则与视觉均通过人工回归
+
+## 给 @B-COD 的单独任务卡（苹果果树地块）
+- 任务 ID：`B-COD-APPLE-TREE-01`
+- 目标：先单独接入“苹果果树地块”，不一次性展开其它新地块
+
+### 目标规则
+1. 苹果果树地块类型：`apple_tree`
+2. 地块显示结构固定为两层：
+   - 底图：`tile-empty.png`
+   - 前景状态图：
+     - `apple_tree_blossom_01.png`
+     - `apple_tree_fruit_01.png`
+     - `apple_tree_harvested_01.png`
+3. 默认初始状态：`blossom`
+4. 在 `blossom` 状态被采集时：
+   - 获得 `+3 花蜜`
+   - 立即切换到 `fruit`
+5. 在**下一回合开始时**：
+   - `fruit` 自动切换到 `harvested`
+
+### 范围边界
+- 本轮只做 `apple_tree`
+- 不同步接入 `bee / orange_tree / tulip`
+- 不改敌人逻辑
+- 不改基础拖拽路径规则
+- 不做新的美术动效，只做状态图切换
+
+### 建议实现拆解
+#### A1：类型与状态字段接入
+- 在现有 tile type 体系中加入 `apple_tree`
+- 为苹果果树地块补充状态字段，至少支持：`blossom / fruit / harvested`
+- 保持未解锁时不暴露真实类型
+
+#### A2：显示层接入
+- 苹果果树地块显示为：`tile-empty.png + apple_tree_xxx_01.png`
+- 根据状态切换前景图：
+  - `blossom -> apple_tree_blossom_01.png`
+  - `fruit -> apple_tree_fruit_01.png`
+  - `harvested -> apple_tree_harvested_01.png`
+- 其它已有地块显示逻辑不回归
+
+#### A3：采集收益接入
+- 仅当苹果果树处于 `blossom` 状态并被采集时：
+  - 增加 `3` 点花蜜收益
+  - 状态改为 `fruit`
+- 不要把这 3 点收益错误加到 `fruit` 或 `harvested`
+
+#### A4：回合切换状态流转
+- 在“下一回合开始”的统一入口处理：
+  - 所有处于 `fruit` 的苹果果树自动变为 `harvested`
+- 注意只在“下一回合开始”时处理，不要在同回合内提前切换
+
+### 验收标准
+1. 调试或正常游玩中可以生成/显示 `apple_tree` 地块
+2. 解锁后默认显示 `apple_tree_blossom_01.png`
+3. 采集 `blossom` 时获得 `+3 花蜜`
+4. 采集后立即显示 `apple_tree_fruit_01.png`
+5. 到下一回合开始时，自动显示 `apple_tree_harvested_01.png`
+6. `fruit` 与 `harvested` 状态不会重复给 3 花蜜
+7. `node --check app.js` 通过
+
+### 人工检查点
+- `blossom / fruit / harvested` 三种图是否都居中
+- 翻牌、路径高亮、失败态下前景图是否被遮挡
+- 下一回合开始的切换时机是否准确
+
+### Handoff 摘要
+- 任务 ID：`B-COD-APPLE-TREE-01`
+- 目标：单独接入苹果果树地块与三态流转
+- 当前状态：规则已锁定，可开发
+- 下一步：`@B-COD` 实现 -> 自检 -> 回流 `@B-FIX`
+- 阻塞：暂无；若后续要加入“结果态收益”或“采空后再生长”，再开新卡
