@@ -97,6 +97,13 @@ const beeStaminaConfig = {
   // 是否把“按下起点的那一格”也算作消耗 1 格
   countStartTile: true,
 };
+const settlementSequenceConfig = {
+  staggerMs: 360,        // 相邻得分格之间的间隔
+  intraTileGapMs: 120,   // 同一格内多朵飞花的微错峰（苹果 +3）
+  bounceDurationMs: 400, // 得分格小跳总时长（与 CSS keyframes 同步）
+  bounceHeightPx: 12,    // 得分格跳跃峰值
+  waitFlightsTailMs: 120,// 最后一朵飞花落地后的兜底缓冲
+};
 const audioAssetMap = {
   bgmMain: "./assets/audio/bgm/bgm-main.mp3",
 };
@@ -418,6 +425,10 @@ function createInitialGameState(options = {}) {
     currentRunVisitedTileIds: new Set(),
     currentRunHarvestedTileIds: new Set(),
     currentRunHoney: 0,
+    pendingScoreList: [],
+    isSettling: false,
+    scoreBounceTileIds: [],
+    scoreBounceStartedAt: {},
     beeStamina: beeStaminaConfig.maxPerRun,
     beeStaminaExhausted: false,
     lastSafeTileId: startTileId,
@@ -2029,6 +2040,7 @@ function createTileElement(tile, appearanceFrameMap = {}) {
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
   const isStartPulse = tile.id === gameState.startPulseTileId;
   const isFlipping = gameState.flipTileIds.includes(tile.id);
+  const isScoreBouncing = gameState.scoreBounceTileIds.includes(tile.id);
   const isStartCandidate = !gameState.isDragging && !gameState.isGameOver && isValidStartCandidate(tile.id);
   const appearanceMeta = appearanceFrameMap[tile.id] ?? null;
   const visibleDangerCount = getVisibleDangerCount(tile.id);
@@ -2052,6 +2064,7 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
     isFlipping ? "tile--flipping" : "",
+    isScoreBouncing ? "tile--score-bounce" : "",
     appearanceMeta ? "tile--appearing" : "",
   ]
     .filter(Boolean)
@@ -2075,6 +2088,16 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     button.style.setProperty("--tile-appear-easing", tileAppearConfig.easing);
   }
   button.style.setProperty("--tile-image", `url("${tileAsset}")`);
+  if (isScoreBouncing) {
+    // 用 negative animation-delay 让动画从已播放的进度继续，避免 renderBoard 重建 DOM 时跳跃从 0 重新开始
+    const startedAt = gameState.scoreBounceStartedAt[tile.id];
+    if (typeof startedAt === "number") {
+      const elapsed = Math.max(0, getNow() - startedAt);
+      button.style.setProperty("--bounce-delay", `${-elapsed}ms`);
+    } else {
+      button.style.setProperty("--bounce-delay", "0ms");
+    }
+  }
   button.dataset.tileId = tile.id;
   button.dataset.row = String(tile.row);
   button.dataset.col = String(tile.col);
@@ -2166,6 +2189,10 @@ function restartGame(options = {}) {
 }
 
 function beginRun(tileId, pointerId = null) {
+  if (gameState.isSettling) {
+    return { ok: false, reason: "settling" };
+  }
+
   if (gameState.isDragging) {
     return { ok: false, reason: "already-dragging" };
   }
@@ -2222,6 +2249,145 @@ function beginRun(tileId, pointerId = null) {
   return { ok: true, reason: "started" };
 }
 
+function computePendingHoneyTotal() {
+  return gameState.pendingScoreList.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+}
+
+function commitPendingSideEffects(list) {
+  list.forEach((entry) => {
+    const tileState = gameState.tileStateMap[entry.tileId];
+    if (!tileState) return;
+    if (entry.sideEffect === "set-pending-fruit") {
+      tileState.pendingFruit = true;
+    } else if (entry.sideEffect === "set-pending-rebloom") {
+      tileState.pendingReBloom = true;
+    }
+  });
+}
+
+function triggerScoreBounce(tileId) {
+  const startedAt = getNow();
+  if (!gameState.scoreBounceTileIds.includes(tileId)) {
+    gameState.scoreBounceTileIds = [...gameState.scoreBounceTileIds, tileId];
+  }
+  gameState.scoreBounceStartedAt = {
+    ...gameState.scoreBounceStartedAt,
+    [tileId]: startedAt,
+  };
+  scheduleFeedback(() => {
+    gameState.scoreBounceTileIds = gameState.scoreBounceTileIds.filter((id) => id !== tileId);
+    const nextStartedAt = { ...gameState.scoreBounceStartedAt };
+    delete nextStartedAt[tileId];
+    gameState.scoreBounceStartedAt = nextStartedAt;
+    triggerRenderOnly();
+  }, settlementSequenceConfig.bounceDurationMs + 20);
+  triggerRenderOnly();
+}
+
+function waitForAllFlightsToLand(callback) {
+  const checkInterval = 40;
+  const maxWaitMs = 4000;
+  const startedAt = getNow();
+
+  function check() {
+    const noActive = feedbackState.activeFlights.size === 0;
+    const noPending = feedbackState.pendingLaunchCount === 0;
+    if ((noActive && noPending) || getNow() - startedAt > maxWaitMs) {
+      scheduleCollectionTask(callback, settlementSequenceConfig.waitFlightsTailMs);
+      return;
+    }
+    scheduleCollectionTask(check, checkInterval);
+  }
+
+  check();
+}
+
+function playRunSettlementSequence(list, onComplete) {
+  gameState.isSettling = true;
+  renderAll();
+
+  let cursor = 0;
+
+  function tick() {
+    while (cursor < list.length && list[cursor].amount === 0) {
+      // harvested 等无得分条目：跳过跳跃与飞花，不消耗 stagger，直接前进
+      cursor += 1;
+    }
+
+    if (cursor >= list.length) {
+      waitForAllFlightsToLand(() => {
+        onComplete?.();
+      });
+      return;
+    }
+
+    const item = list[cursor];
+    cursor += 1;
+
+    triggerScoreBounce(item.tileId);
+    const flowerCount = item.amount;
+    for (let i = 0; i < flowerCount; i += 1) {
+      scheduleCollectionTask(
+        () => spawnFlowerFlyEffect(item.tileId),
+        i * settlementSequenceConfig.intraTileGapMs
+      );
+    }
+
+    scheduleCollectionTask(tick, settlementSequenceConfig.staggerMs);
+  }
+
+  tick();
+}
+
+function finalizeSuccessRun(context) {
+  const {
+    path,
+    pathLength,
+    consumedBee,
+    nextStartTileId,
+    pendingList,
+  } = context;
+
+  // 提交副作用（苹果树状态推进 / 重开花标记）
+  commitPendingSideEffects(pendingList);
+
+  const gainedHoney = pendingList.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+  gameState.totalHoney += gainedHoney;
+  gameState.statusText = consumedBee
+    ? `本轮成功，获得 ${gainedHoney} 花蜜。`
+    : "本轮未采集，蜜蜂未消耗。";
+  triggerSuccessFeedback(nextStartTileId, gainedHoney, {
+    message: gameState.statusText,
+    tone: consumedBee ? "success" : "info",
+  });
+
+  logEvent("本轮成功结算", {
+    path,
+    pathLength,
+    consumedBee,
+    gainedHoney,
+    totalHoney: gameState.totalHoney,
+    nextStartTileId,
+    sideEffects: pendingList.map((entry) => ({ tileId: entry.tileId, sideEffect: entry.sideEffect })),
+  });
+
+  // 通关 / game-over 判定推迟到序列尾
+  if (gameState.totalHoney >= honeyGoalTarget) {
+    gameState.isGameWin = true;
+    gameState.isGameOver = true;
+    gameState.statusText = `恭喜通关！总花蜜：${gameState.totalHoney}`;
+    showToast("恭喜通关！", "success");
+    logEvent("通关", getStateSnapshot());
+  } else if (gameState.remainingBees <= 0) {
+    updateGameOverState();
+  }
+
+  gameState.pendingScoreList = [];
+  gameState.isSettling = false;
+  queueRoundHoneyReset();
+  renderAll();
+}
+
 function completeRun(outcome) {
   if (!gameState.isDragging && gameState.currentPath.length === 0 && outcome !== "failure") {
     return { ok: false, reason: "idle" };
@@ -2246,6 +2412,8 @@ function completeRun(outcome) {
   }
 
   if (outcome === "failure") {
+    // 失败：所有 pending 副作用与得分一律作废
+    gameState.pendingScoreList = [];
     gameState.lastEndedTileId = nextStartTileId;
     gameState.currentStartTileId = null;
     gameState.currentRunHoney = 0;
@@ -2259,30 +2427,23 @@ function completeRun(outcome) {
       nextStartTileId,
       totalHoney: gameState.totalHoney,
     });
-  } else {
-    const gainedHoney = gameState.currentRunHoney;
-    gameState.totalHoney += gainedHoney;
-    gameState.lastEndedTileId = nextStartTileId;
-    gameState.currentStartTileId = null;
-    gameState.currentRunHoney = 0;
-    queueRoundHoneyReset();
-    gameState.statusText = consumedBee
-      ? `本轮成功，获得 ${gainedHoney} 花蜜。`
-      : "本轮未采集，蜜蜂未消耗。";
-    triggerSuccessFeedback(nextStartTileId, gainedHoney, {
-      message: gameState.statusText,
-      tone: consumedBee ? "success" : "info",
-    });
-    logEvent("本轮成功结算", {
-      path,
-      pathLength,
-      consumedBee,
-      gainedHoney,
-      totalHoney: gameState.totalHoney,
-      nextStartTileId,
-    });
+    gameState.isDragging = false;
+    gameState.dragPointerId = null;
+    gameState.currentPath = [];
+    gameState.currentRunVisitedTileIds = new Set();
+    gameState.currentRunHarvestedTileIds = new Set();
+    gameState.hasHitEnemy = false;
+    gameState.lastOutcome = outcome;
+    updateGameOverState();
+    renderAll();
+    return { ok: true, reason: outcome, path, nextStartTileId };
   }
 
+  // 成功：先把同步状态写完，把序列要用的快照拿出来
+  const pendingListSnapshot = gameState.pendingScoreList.slice();
+  gameState.lastEndedTileId = nextStartTileId;
+  gameState.currentStartTileId = null;
+  gameState.currentRunHoney = 0;
   gameState.isDragging = false;
   gameState.dragPointerId = null;
   gameState.currentPath = [];
@@ -2290,27 +2451,60 @@ function completeRun(outcome) {
   gameState.currentRunHarvestedTileIds = new Set();
   gameState.hasHitEnemy = false;
   gameState.lastOutcome = outcome;
-  // 体力环不在本轮收尾时回满，保留当前残量直到下一轮 beginRun 再统一重置；
-  // 这样玩家松手 / 自动结算瞬间不会出现“环突然回满”的视觉跳变。
-  if (outcome === "success" && gameState.totalHoney >= honeyGoalTarget) {
-    gameState.isGameWin = true;
-    gameState.isGameOver = true;
-    gameState.statusText = `恭喜通关！总花蜜：${gameState.totalHoney}`;
-    showToast("恭喜通关！", "success");
-    logEvent("通关", getStateSnapshot());
-  } else if (outcome === "failure") {
-    updateGameOverState();
-  } else if (gameState.remainingBees <= 0) {
-    updateGameOverState();
-  }
-  renderAll();
+  // 体力环不在本轮收尾时回满，保留当前残量直到下一轮 beginRun 再统一重置
 
-  return {
-    ok: true,
-    reason: outcome,
-    path,
-    nextStartTileId,
-  };
+  const totalAmount = pendingListSnapshot.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+  const hasAnyEntries = pendingListSnapshot.length > 0;
+
+  if (totalAmount === 0 && !hasAnyEntries) {
+    // 纯路过，没有任何 pending：直接走原“未采集”分支
+    gameState.statusText = consumedBee
+      ? "本轮成功，获得 0 花蜜。"
+      : "本轮未采集，蜜蜂未消耗。";
+    triggerSuccessFeedback(nextStartTileId, 0, {
+      message: gameState.statusText,
+      tone: consumedBee ? "success" : "info",
+    });
+    if (gameState.remainingBees <= 0) {
+      updateGameOverState();
+    }
+    queueRoundHoneyReset();
+    renderAll();
+    return { ok: true, reason: outcome, path, nextStartTileId };
+  }
+
+  if (totalAmount === 0 && hasAnyEntries) {
+    // 仅 harvested 类条目：不播跳/飞花，但仍提交 pendingReBloom 副作用
+    commitPendingSideEffects(pendingListSnapshot);
+    gameState.pendingScoreList = [];
+    gameState.statusText = consumedBee
+      ? "本轮成功，获得 0 花蜜。"
+      : "本轮未采集，蜜蜂未消耗。";
+    triggerSuccessFeedback(nextStartTileId, 0, {
+      message: gameState.statusText,
+      tone: consumedBee ? "success" : "info",
+    });
+    if (gameState.remainingBees <= 0) {
+      updateGameOverState();
+    }
+    queueRoundHoneyReset();
+    renderAll();
+    return { ok: true, reason: outcome, path, nextStartTileId };
+  }
+
+  // 有花蜜要入账：进入结算序列
+  playRunSettlementSequence(pendingListSnapshot, () => {
+    finalizeSuccessRun({
+      path,
+      pathLength,
+      consumedBee,
+      nextStartTileId,
+      pendingList: pendingListSnapshot,
+    });
+  });
+
+  renderAll();
+  return { ok: true, reason: outcome, path, nextStartTileId };
 }
 
 function extendRun(tileId) {
@@ -2347,46 +2541,47 @@ function extendRun(tileId) {
   setTileRevealed(tileId);
   gameState.lastSafeTileId = tileId;
 
-  if (tileState.type === "flower" && !gameState.currentRunHarvestedTileIds.has(tileId)) {
-    // 本轮第一次进入这朵花：加蜜 + Combo + 飞花
-    gameState.currentRunHarvestedTileIds.add(tileId);
-    gameState.currentRunHoney += 1;
+  // 拖动期：所有“收益 / 副作用”都不立即生效，仅 push 到 pendingScoreList，
+  // 等松手成功结算播完序列后再统一入账与提交副作用。
+  const alreadyInPendingScore = gameState.pendingScoreList.some(
+    (entry) => entry.tileId === tileId
+  );
+
+  if (tileState.type === "flower" && !alreadyInPendingScore) {
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "flower",
+      amount: 1,
+      sideEffect: null,
+    });
     incrementCombo(tileId);
-    spawnFlowerFlyEffect(tileId);
-    gameState.statusText = `采到小白花：本轮暂存花蜜 ${gameState.currentRunHoney}。`;
-  } else if (tileState.type === "flower") {
-    // 本轮已经采过这朵花：算路过，不加蜜、不放飞花、不连击；下一轮新蜜蜂才会重新可采
-    gameState.statusText = `路过本轮已采花格 ${tileId}。`;
   } else if (
     tileState.type === "apple_tree" &&
     getAppleTreeGrowthStage(tileState) === "blossom" &&
-    !tileState.pendingFruit
+    !alreadyInPendingScore
   ) {
-    // 翻开瞬间永远显示 blossom：这里只加蜜 + 标记 pendingFruit，growthStage 保持 blossom
-    tileState.pendingFruit = true;
-    gameState.currentRunHoney += 3;
-    if (hasDom && dom?.roundHoney) {
-      enqueueTempHoneyIncrement(3);
-    } else {
-      syncRoundHoney(gameState.currentRunHoney);
-    }
-    gameState.statusText = `采到苹果花：本轮暂存花蜜 ${gameState.currentRunHoney}。`;
-  } else if (tileState.type === "apple_tree" && getAppleTreeGrowthStage(tileState) === "blossom") {
-    // 同回合已采过这棵苹果树：视觉仍是 blossom，但不再加蜜
-    gameState.statusText = `路过本轮已采苹果果树 ${tileId}。`;
-  } else if (tileState.type === "apple_tree" && getAppleTreeGrowthStage(tileState) === "fruit") {
-    gameState.statusText = `路过结果中的苹果果树 ${tileId}。`;
-  } else if (tileState.type === "apple_tree") {
-    // harvested：本轮经过即标记 pendingReBloom，视觉本轮仍 harvested，下一回合开始时重新开花
-    if (!tileState.pendingReBloom) {
-      tileState.pendingReBloom = true;
-    }
-    gameState.statusText = `路过已采收的苹果果树 ${tileId}，下一回合将重新开花。`;
-  } else if (isFirstVisitThisRun) {
-    gameState.statusText = `进入新安全格 ${tileId}。`;
-  } else {
-    gameState.statusText = `路过本轮已走过的安全格 ${tileId}。`;
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "apple_tree_blossom",
+      amount: 3,
+      sideEffect: "set-pending-fruit",
+    });
+    incrementCombo(tileId);
+  } else if (
+    tileState.type === "apple_tree" &&
+    getAppleTreeGrowthStage(tileState) === "harvested" &&
+    !alreadyInPendingScore
+  ) {
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "apple_tree_harvested",
+      amount: 0,
+      sideEffect: "set-pending-rebloom",
+    });
   }
+
+  // 拖动期 statusText 统一口径（口径 C）：只显示路径长度，不再透露具体得分
+  gameState.statusText = `采集中：已走 ${gameState.currentPath.length} 格`;
 
   playTileRevealSound();
 
@@ -2405,7 +2600,7 @@ function extendRun(tileId) {
     tileId,
     tileType: tileState.type,
     path: [...gameState.currentPath],
-    currentRunHoney: gameState.currentRunHoney,
+    pendingHoneyTotal: computePendingHoneyTotal(),
     beeStamina: gameState.beeStamina,
     isFirstVisitThisRun,
   });
@@ -2416,7 +2611,7 @@ function extendRun(tileId) {
     logEvent("蜜蜂体力耗尽，自动结算本轮", {
       tileId,
       path: [...gameState.currentPath],
-      currentRunHoney: gameState.currentRunHoney,
+      pendingHoneyTotal: computePendingHoneyTotal(),
     });
     return completeRun("success");
   }
@@ -2452,6 +2647,11 @@ function releasePointer(pointerId) {
 }
 
 function handlePointerDown(event) {
+  if (gameState.isSettling) {
+    // 结算序列播放中：静默忽略所有手势
+    return;
+  }
+
   const tileElement = event.target.closest?.(".tile");
 
   if (!tileElement) {

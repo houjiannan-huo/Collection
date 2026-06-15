@@ -882,6 +882,24 @@ body.is-dragging-cursor * {
   }
 }
 
+@keyframes tile-score-bounce {
+  0% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-12px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.tile--score-bounce .tile__inner {
+  animation: tile-score-bounce 400ms ease-out;
+  animation-delay: var(--bounce-delay, 0ms);
+  animation-fill-mode: backwards;
+}
+
 @keyframes tile-shake {
   0%,
   100% {

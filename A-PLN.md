@@ -306,3 +306,62 @@
 - 当前状态：规则已锁定，可开发
 - 下一步：`@B-COD` 实现 -> 自检 -> 回流 `@B-FIX`
 - 阻塞：暂无；若后续要加入“结果态收益”或“采空后再生长”，再开新卡
+
+---
+
+## 任务卡：结算延迟到松手 + 飞币归集序列
+
+- 任务 ID：`A-PLN-SETTLE-SEQUENCE-01`
+- 目标：把“拖动到得分格立即结算花蜜”改为“松手后按路径顺序逐格触发飞币归集 + 小跳”
+
+### 规则口径（已与用户拍板）
+1. 拖动期：
+   - 进入花格 / 苹果 blossom / 苹果 harvested 时只“记账”，写入 `pendingScoreList`
+   - 不立即加 `currentRunHoney`，不放飞花，不改 `pendingFruit / pendingReBloom`
+   - HUD `本轮暂存` 拖动中恒为 `0`
+   - `statusText` 统一显示 `"采集中：已走 N 格"`
+   - Combo 拖动中仍即时累加（不动现状）
+2. 松手成功结算：
+   - 按 `pendingScoreList` 的顺序（= 玩家拖动路径顺序）逐个触发：
+     - 该格 `-8px / 220ms` 小跳
+     - 飞花从该格弧线到 HUD（flower 1 朵，苹果 blossom 同格连发 3 朵，错峰 80ms）
+     - 每朵飞花落地时 HUD `本轮暂存` `+1`
+   - 相邻条目之间间隔 `160ms`
+   - 全部飞花落地后再统一：
+     - 提交 `pendingFruit / pendingReBloom` 副作用
+     - `totalHoney` 入账
+     - `totalHoneyPulse / startPulse / toast` 走原成功反馈链路
+     - 判定通关 / `game-over`
+3. `harvested` 单独路过：
+   - 不跳、不发飞花，但仍 `pendingReBloom = true`（用于下一回合重新开花）
+   - 若整轮只采到 harvested（无花蜜），直接走“静默提交副作用”分支，不播序列
+4. 失败链路：
+   - 撞天敌 / 任何 outcome=failure
+   - 一律 `pendingScoreList = []`、所有 pending 副作用作废
+5. 锁定态：
+   - 序列播放期间任何 `pointerdown / beginRun` 静默忽略
+   - 不弹 toast、不闪格子
+6. 配置参数（首版）：
+   - `staggerMs = 160`
+   - `intraTileGapMs = 80`
+   - `bounceHeightPx = 8`
+   - `bounceDurationMs = 220`
+   - `waitFlightsTailMs = 120`
+
+### 范围边界
+- 不接入新地块类型
+- 不动失败反馈（红闪 / 抖动 / 失败 toast）
+- 不动 BGM / 自定义光标
+- Combo 暂不改造（先体验）
+
+### 验收标准
+1. 拖动过 2 花 + 1 苹果 blossom：HUD 暂存全程显示 0；松手后按"花 → 苹果"顺序逐格跳；2 朵 + 3 朵共 5 朵飞花到达 HUD 后总花蜜 `+5`
+2. 拖动中撞天敌：花蜜不入账；下一回合苹果 blossom 仍是 blossom（未消耗）
+3. 单独路过 harvested：松手不播序列；下一回合该苹果变 blossom
+4. 序列播放期间反复点击其它格：完全无反馈
+5. `node --check app.js` 通过
+
+### Handoff
+- 任务 ID：`A-PLN-SETTLE-SEQUENCE-01`
+- 当前状态：规则已锁定，已交 `@B-COD` 落地
+- 下一步：`@B-COD` 实现 -> 实机回归 -> 必要时由 `@B-FIX` 微调手感参数

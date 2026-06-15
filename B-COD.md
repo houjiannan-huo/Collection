@@ -1,15 +1,52 @@
 # B-COD 记录
 
 ## Claim
-- 任务 ID：B-COD-APPLE-TREE-01
-- 当前 claim：模块《单独接入苹果果树地块》
-- 范围：仅接入 `apple_tree` 类型、`blossom / fruit / harvested` 三态显示、`blossom` 采集 `+3 花蜜`、以及“下一回合开始时 `fruit -> harvested`”流转；不接入 `bee / orange_tree / tulip`，不改敌人逻辑，不改基础拖拽路径规则，不做新动效
-- 备注：原 `UI-BEE-STAMINA-01` 相关实现已在下方实现记录保留；本轮按新任务卡切到 `apple_tree` 模块
+- 任务 ID：B-COD-SETTLE-SEQUENCE-01
+- 当前 claim：模块《结算延迟到松手 + 飞币归集序列》
+- 范围：
+  - 拖动期"只记账不入账"：`pendingScoreList` 收集 flower / apple_tree blossom / apple_tree harvested 三类条目
+  - 松手成功结算：按路径顺序逐格跳 + 飞花，全部落地后提交副作用与花蜜
+  - HUD 暂存拖动中恒为 0；statusText 统一显示 `"采集中：已走 N 格"`
+  - 失败链路一律作废 pending（含苹果状态副作用）
+  - 序列期间 `pointerdown / beginRun` 静默拦截
+- 历史 claim 已闭环：`B-COD-APPLE-TREE-01`（苹果果树三态 + 循环流转 + 视觉位置微调）、`UI-BEE-STAMINA-01`（蜜蜂体力环）
 - 历史 claim 已闭环：`ART-TILE-ENEMY-01`（天敌格子双层资源叠加显示）
 - 历史 claim 已闭环：`B-COD-DEMO-FEEDBACK-001`（花朵采集反馈）、`B-COD-DEMO-FEEDBACK-002`（自定义光标）、`B-COD-DEMO-FEEDBACK-002-A`（光标资源接入）、`SFX-01`（翻格音效）、`SFX-02`（撞天敌音效）、`FX-01`（采集范围高亮）、`B-COD-DEMO-AUDIO-001`（主背景 BGM 接入）、`FX-02`（起点格子强化标识）、`RULE-01`（取消起点继承 + 自由选择起点）、`RULE-02`（蜜蜂消耗保护机制）、`RULE-03 / FX-03`（删除固定起点 UI + 非法点击反馈）
 
 ## 实现记录
-- 本轮新增 `apple_tree` 地块类型，并把默认随机分布调整为 `enemy:3 / flower:9 / apple_tree:1 / empty:6`，确保正常开局即可生成苹果果树地块
+- 本轮（`B-COD-SETTLE-SEQUENCE-01`）核心改造：把"采集即结算"改为"松手后按路径顺序播放飞币归集 + 得分格小跳"
+  - 新增常量 `settlementSequenceConfig = { staggerMs:160, intraTileGapMs:80, bounceDurationMs:220, bounceHeightPx:8, waitFlightsTailMs:120 }`
+  - `gameState` 新增三个字段：
+    - `pendingScoreList: Array<{ tileId, type, amount, sideEffect }>`
+    - `isSettling: boolean`
+    - `scoreBounceTileIds: string[]`
+  - `extendRun()` 重写收益分支：
+    - flower 首访 → push `{type:"flower", amount:1, sideEffect:null}`
+    - apple_tree blossom 首访 → push `{type:"apple_tree_blossom", amount:3, sideEffect:"set-pending-fruit"}`
+    - apple_tree harvested 首访 → push `{type:"apple_tree_harvested", amount:0, sideEffect:"set-pending-rebloom"}`
+    - 不再立即写 `currentRunHoney / pendingFruit / pendingReBloom`
+    - 不再立即 `spawnFlowerFlyEffect / enqueueTempHoneyIncrement`
+    - statusText 统一为 `"采集中：已走 N 格"`
+    - Combo 仍即时弹（仅在 flower / apple_tree blossom 首访触发）
+  - 新增函数 `playRunSettlementSequence(list, onComplete)`：
+    - 跳过 `amount===0` 条目（不消耗 stagger）
+    - 每个得分条目：`triggerScoreBounce(tileId)` + 按 `intraTileGapMs` 错峰发 N 朵飞花
+    - 序列收尾用 `waitForAllFlightsToLand` 等所有飞花落地 + `waitFlightsTailMs` 兜底缓冲
+  - 新增函数 `commitPendingSideEffects(list)`：序列尾统一提交 `pendingFruit / pendingReBloom`
+  - 新增函数 `finalizeSuccessRun(context)`：副作用提交 + `totalHoney +=` + `triggerSuccessFeedback` + 通关/`game-over` 判定
+  - `completeRun("success")` 重写：
+    - 同步操作（蜜蜂扣费、清 path、设 nextStartTileId、退出 isDragging）保持松手即时
+    - 0 收益 + 0 条目 → 直接走"未采集"分支
+    - 0 收益 + 仅 harvested 条目 → 静默 commitPendingSideEffects，不进序列
+    - 有收益 → 进入 `playRunSettlementSequence`
+  - `completeRun("failure")` 重写：
+    - `pendingScoreList = []`、不提交任何副作用
+    - 其余失败反馈链路维持
+  - `beginRun()` 与 `handlePointerDown()` 顶部新增 `if (gameState.isSettling) return`，静默拦截
+  - `createTileElement()` 新增 `tile--score-bounce` class 判定
+  - `style.css` 新增 keyframes `tile-score-bounce`：220ms 内 `translateY(0 → -8px → 0)`，作用于 `.tile__inner`
+  - `index.html` 资源版本号升级为 `settle-sequence-20260616-1`
+- 上一轮（`B-COD-APPLE-TREE-01` 完结）：新增 `apple_tree` 地块类型，并把默认随机分布调整为 `enemy:3 / flower:9 / apple_tree:1 / empty:6`，确保正常开局即可生成苹果果树地块
 - 新增 `appleTreeStateAssetMap` 与 `tileState.growthStage`；苹果果树统一走 `blossom / fruit / harvested` 三态，初始化默认 `blossom`
 - `getTileVisualMarkup()` 现对 `apple_tree` 复用安全格双层结构：底图固定 `tile-empty.png`，前景按 `growthStage` 切到 `apple_tree_blossom_01.png / apple_tree_fruit_01.png / apple_tree_harvested_01.png`
 - `isSafeTileType()` / `isValidStartCandidate()` 已纳入 `apple_tree`，保证苹果果树在解锁后仍可作为安全路径格与起点候选
@@ -161,6 +198,11 @@
 - 苹果果树资源入口：`appleTreeStateAssetMap`（位于 `app.js`）
 - 苹果果树前景样式入口：`.tile__image--apple-tree`（位于 `style.css`）
 - 调试观察：revealed 苹果果树 DOM 会写入 `data-growth-stage`，可直接检查当前三态
+- 结算序列配置入口：`settlementSequenceConfig`（位于 `app.js`，含 `staggerMs / intraTileGapMs / bounceDurationMs / bounceHeightPx / waitFlightsTailMs`）
+- 结算序列运行态：`gameState.pendingScoreList` / `gameState.isSettling` / `gameState.scoreBounceTileIds`
+- 结算序列函数：`playRunSettlementSequence(list, onComplete)` / `triggerScoreBounce(tileId)` / `commitPendingSideEffects(list)` / `finalizeSuccessRun(context)` / `waitForAllFlightsToLand(cb)` / `computePendingHoneyTotal()`（均位于 `app.js`）
+- 得分格小跳样式入口：`.tile--score-bounce`、keyframes `tile-score-bounce`（位于 `style.css`）
+- 调试观察：`window.demoBoard.gameState.pendingScoreList` 拖动期可见所有"将得"条目；`isSettling` 真值代表序列播放中
 - 后续可直接复用的数据入口：`window.demoBoard.tiles`、`window.demoBoard.adjacencyMap`、`window.demoBoard.gameState`
 - 内容调试入口：`window.demoBoard.contentSummary`、`window.demoBoard.tileStateMap`
 - 交互调试入口：`window.demoBoard.beginRun(tileId)`、`window.demoBoard.extendRun(tileId)`、`window.demoBoard.endRun()`、`window.demoBoard.resetGame({ typeMap })`
@@ -210,6 +252,18 @@
 
 ## 验证记录
 - 已做:
+  0. 结算序列接入后执行 `node --check app.js`，语法通过
+  0. 无 DOM headless 模拟：拖动经过 T17(flower) → T19(apple_tree blossom)
+     - 拖动期 `pendingScoreList` 正确累加，`currentRunHoney` 全程 0，`tileState.pendingFruit` 全程 false
+     - `endRun` 即时 `isSettling=true / totalHoney=0`，约 1500ms 后 `isSettling=false / totalHoney=4`，T19 `pendingFruit=true`、`growthStage` 仍 `blossom`
+  0. 无 DOM headless 模拟：单独路过 harvested 苹果
+     - 松手不进序列、`isSettling` 即时归 `false`
+     - 副作用静默提交：`pendingReBloom=true`
+     - `totalHoney` 不变
+  0. 无 DOM headless 模拟：序列守门
+     - 松手即时 `isSettling=true`
+     - 序列中 `beginRun(...)` 返回 `{ok:false, reason:"settling"}`
+     - 约 3000ms 后 `isSettling` 归 `false`
   0. 苹果果树接入后执行 `node --check app.js`，语法通过
   0. 代码级确认：默认随机分布现包含 1 个 `apple_tree`，满足“可生成并显示 apple_tree 地块”
   0. 代码级确认：`apple_tree` 初始化 `growthStage="blossom"`，revealed 后显示 `tile-empty + apple_tree_blossom_01`
@@ -265,8 +319,16 @@
    27. 接入 RULE-03 / FX-03 后再次执行 `node --check app.js`，语法通过；固定起点文案/描边/常驻跟随物已移除，新增非法点击红闪与预留音效接口
    28. 接入 `B-COD-DEMO-FEEDBACK-003` Combo System 后再次执行 `node --check app.js`，语法通过；Combo 现按“每采到一朵花 +1”触发，`empty` / `enemy` 不会误加；重开会立即清空，其余由 2.5 秒超时自然结束
 - 未做：浏览器人工打开验收
-- 未验证原因：当前会话未启动浏览器进行视觉检查，也无法在此直接录屏；尚未人工确认苹果果树 `blossom / fruit / harvested` 三态图片是否完全居中、与翻牌/路径高亮/失败态是否存在遮挡，同时 Combo 浮层等旧功能也未做本轮实机回归
-- 建议验证步骤：
+- 未验证原因：当前会话未启动浏览器；尚未人工确认结算序列在真实 DOM 下的飞花轨迹、得分格 -8px 小跳是否流畅、本轮暂存 HUD 滚动节奏是否对齐、序列期间手势屏蔽是否完全无反馈，以及 Combo 与新序列叠加观感
+- 建议验证步骤（结算序列专项）：
+   - 序列专项 1：直接打开 `index.html`，强刷确认已加载 `settle-sequence-20260616-1` 版本资源
+   - 序列专项 2：从 T18 拖动经过 2 朵花 + 1 棵苹果 blossom，松手 → 本轮暂存 HUD 全程显示 0；松手后按"花、花、苹果"顺序逐格 -8px 小跳；苹果格连发 3 朵飞花，错峰约 80ms；HUD 一颗颗 +1 滚到 5
+   - 序列专项 3：拖动经过 1 棵 harvested 苹果（无花蜜得分）→ 松手不播跳/飞花；下一回合开始时该苹果变 blossom
+   - 序列专项 4：拖动经过 1 棵 blossom 苹果后撞天敌失败 → 总花蜜不变；下一回合该苹果仍是 blossom（pendingFruit 没被错误提交）
+   - 序列专项 5：序列播放期间疯狂点击棋盘 → 完全无反馈、无 toast
+   - 序列专项 6：序列结束后总花蜜恰好达标 → 应在序列尾再弹通关面板
+   - 序列专项 7：体力归 0 触发自动结算 → 序列正常播完后再判定 game-over
+- 建议验证步骤（苹果三态历史专项）：
    - 苹果专项 1：直接打开 `index.html`，强刷确认已加载 `apple-tree-20260614-1` 版本资源
    - 苹果专项 2：通过正常开局或 `window.demoBoard.resetGame({ typeMap })` 确认盘面可出现 `apple_tree`
    - 苹果专项 3：进入 `apple_tree blossom` 时确认本轮暂存立即 `+3`，且前景图立刻切成 `apple_tree_fruit_01.png`
