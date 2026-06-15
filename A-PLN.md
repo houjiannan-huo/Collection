@@ -477,3 +477,48 @@
 2. 单独拖一条全是 sprout / harvested：全程节奏均匀小跳，每格切下一阶段，不出花蜜
 3. 撞天敌：阶段不变、不跳
 4. `node --check app.js` 通过
+
+---
+
+## 任务卡：新增郁金香地块（A-PLN-TULIP-01）
+
+- 任务 ID：`A-PLN-TULIP-01`
+- 目标：在棋盘上新增 `tulip` 类型地块，采集即 +2 花蜜
+
+### 已确认口径
+- 类型：`tulip`，前景图 `assets/tiles/tulip_01.png`，底图复用 `tile-empty.png`
+- 收益：采集 +2 花蜜，参与 Combo / 小跳 / 飞花序列（2 朵）
+- 无阶段流转（不像 flower 或 apple_tree）
+- 花蜜分桶：仅累加到 `totalHoney`，不进 `flowerHoney` 也不进 `appleHoney`（与小白花 / 苹果花的通关目标解耦）
+- 棋盘分布：`tileTypeRatioBaseCounts` 调整为 `{ enemy:3, flower:9, apple_tree:1, tulip:2, empty:4 }`，总数 19 不变（empty 9→4）
+- 起点 T18 仍不允许是 enemy；tulip 与其它 safe 类型共享 safe 候选池
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-TULIP-01`
+
+### 验收
+1. 调试开局可看到 2 个郁金香地块（资源 `tulip_01.png`）
+2. 拖动到郁金香格：小跳 + 顶点不切图（无阶段流转）+ 2 朵飞花飞向 HUD
+3. 撞天敌：郁金香 amount 作废
+4. 通关条件未改（仍需小白花 12 + 苹果花 2），郁金香花蜜仅记入 totalHoney
+5. `node --check app.js` 通过
+
+---
+
+## 任务卡：通关条件加入郁金香（A-PLN-WIN-TULIP-01）
+
+- 任务 ID：`A-PLN-WIN-TULIP-01`
+- 目标：通关条件由"小白花 12 + 苹果花 2"扩展为"小白花 12 + 苹果花 2 + 郁金香 4"
+
+### 已确认口径
+- `goalTargets = { flower: 12, apple: 2, tulip: 4 }`
+- `gameState` 新增 `tulipHoney`，结算时郁金香条目 (`entry.type === "tulip"`) 累加进 `tulipHoney`，仍同时计入 `totalHoney`
+- 胜负判定：三桶都达标才通关
+- HUD / 结束面板 / 通关面板 / game-over 状态文本统一新增 `· 郁金香 X/4`
+
+### 验收
+1. HUD 显示 `小白花 X/12 · 苹果花 Y/2 · 郁金香 Z/4`
+2. 只达成 flower+apple 但 tulip 不足：不算通关
+3. 三桶都达成：通关、win 面板含 `郁金香 X/4`
+4. 蜜蜂耗尽未通关：game-over 文案三桶齐显
+5. `node --check app.js` 通过

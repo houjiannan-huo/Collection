@@ -472,3 +472,45 @@
 ### 自检
 - `node --check app.js` 通过
 - 待 `@B-FIX` 实机回归：sprout 单跳无飞花、harvested 单跳无飞花、bloom/sprout/苹果混跳节奏均匀
+
+---
+
+## 任务卡：新增郁金香地块（B-COD-TULIP-01）
+
+- 任务 ID：`B-COD-TULIP-01`
+- 目标：让 `tulip` 类型作为新地块完整融入现有玩法
+
+### 已实施改动
+- `app.js`
+  - `tileTypeRatioBaseCounts`：新增 `tulip:2`、`empty:6→4`
+  - `tileTypeOrder`：扩展为 `[enemy, flower, apple_tree, tulip, empty]`
+  - `createTileTypeSummary` 包含 `tulip:0`
+  - `tileAssetMap.tulip = tile-empty.png`；新增 `tulipOverlayAsset = "./assets/tiles/tulip_01.png"`
+  - `assignRandomTileTypes`：在 apple_tree 后、flower 前抽取 `tulip` 候选池
+  - `validateTypeMap`：加入 `summary.tulip` 校验
+  - `isSafeTileType` 包含 `tulip`
+  - `getTileTypeLabel("tulip") = "郁金香"`
+  - `getSafeTileOverlayMarkup` 新增 tulip 分支
+  - `extendRun` 新增 tulip 分支：amount=2、sideEffect=null、`incrementCombo`
+- `style.css`：新增 `.tile__image--tulip`（复用 flower 的位置规则）
+
+### 自检
+- `node --check app.js` 通过
+- 待 `@B-FIX` 实机回归：分布数量正确、郁金香前景居中、小跳 + 飞花 2 朵、撞天敌作废、Combo 计入
+
+---
+
+## 任务卡：通关条件加入郁金香（B-COD-WIN-TULIP-01）
+
+- 任务 ID：`B-COD-WIN-TULIP-01`
+
+### 已实施改动
+- `app.js`
+  - `goalTargets` 新增 `tulip: 4`；`honeyGoalTarget` 同步累加
+  - `createInitialGameState` 返回的 state 新增 `tulipHoney: 0`
+  - `finalizeSuccessRun`：新增 `gainedTulip` 累计与 `tulipHoney` 入账；通关条件三桶都达标；通关 statusText 含郁金香
+  - HUD 文本：`renderHud` 主 HUD / gameOverSummary / gameWinSummary 全部加 `· 郁金香 X/4`
+  - 三处 `游戏结束 · 小白花...` 文本统一补 `· 郁金香 X/4`
+
+### 自检
+- `node --check app.js` 通过

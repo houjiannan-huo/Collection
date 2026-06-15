@@ -170,8 +170,8 @@ body::before {
 .hud {
   width: 100%;
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex-wrap: nowrap;
   justify-content: center;
   align-items: center;
   gap: 10px;
@@ -564,6 +564,18 @@ body::before {
   transform: translateX(-50%);
   object-fit: contain;
   transform-origin: center;
+}
+
+.tile__image--tulip {
+  z-index: 2;
+  /* tulip_01.png 自身无透明留白（103×115），相对 flower_bloom_01.png（165×160 含大量留白）需收小，
+     以保持与小白花、苹果树视觉同一档量级 */
+  width: 56%;
+  height: auto;
+  inset: calc(10% + 4px) auto auto 50%;
+  transform: translateX(-50%);
+  object-fit: contain;
+  transform-origin: top center;
 }
 
 .tile__image--enemy {
