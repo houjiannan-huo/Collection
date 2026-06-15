@@ -115,7 +115,7 @@ const boardMetrics = {
   leftPadding: 36,
   topPadding: 62,
   xUnit: 66,
-  yUnit: 99,
+  yUnit: 110,
 };
 const boardDisplayScale = 1.7;
 
