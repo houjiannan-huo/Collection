@@ -1451,6 +1451,69 @@ function spawnTilePopupText(tileId, amount) {
   };
   element.addEventListener("animationend", remove, { once: true });
   scheduleFeedback(remove, 900);
+
+  spawnTileConfettiBurst(anchor);
+}
+
+function spawnTileConfettiBurst(anchor) {
+  if (!hasDom || !dom?.fxOverlay || !anchor) {
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.className = "tile-confetti";
+  container.style.left = `${anchor.x}px`;
+  container.style.top = `${anchor.y}px`;
+
+  const palette = ["#ffd54a", "#ff8a3c", "#ff6f91", "#5ad6ff", "#ffffff"];
+  const shapes = [
+    "square", "square", "square", "square",
+    "triangle", "triangle", "triangle", "triangle",
+    "circle", "circle", "circle", "circle",
+  ];
+  // Fisher-Yates 洗牌，让形状分布不固定
+  for (let i = shapes.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = shapes[i];
+    shapes[i] = shapes[j];
+    shapes[j] = tmp;
+  }
+
+  const total = 12;
+  const baseAngle = Math.random() * 360;
+
+  for (let i = 0; i < total; i += 1) {
+    const shape = shapes[i];
+    const jitter = (Math.random() - 0.5) * 24; // ±12°
+    const angleDeg = baseAngle + (i / total) * 360 + jitter;
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const distance = 40 + Math.random() * 24; // 40~64
+    const dx = Math.cos(angleRad) * distance;
+    const dy = Math.sin(angleRad) * distance;
+    const rot = (Math.random() * 720 - 360).toFixed(1);
+    const delay = Math.floor(Math.random() * 60);
+    const color = palette[Math.floor(Math.random() * palette.length)];
+    const size = shape === "circle" ? 7 + Math.random() * 2 : 8;
+
+    const particle = document.createElement("span");
+    particle.className = `tile-confetti__particle tile-confetti__particle--${shape}`;
+    particle.style.setProperty("--dx", `${dx.toFixed(2)}px`);
+    particle.style.setProperty("--dy", `${dy.toFixed(2)}px`);
+    particle.style.setProperty("--rot", `${rot}deg`);
+    particle.style.setProperty("--delay", `${delay}ms`);
+    particle.style.setProperty("--bg", color);
+    particle.style.setProperty("--size", `${size.toFixed(1)}px`);
+    container.appendChild(particle);
+  }
+
+  dom.fxOverlay.appendChild(container);
+
+  const remove = () => {
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
+    }
+  };
+  scheduleFeedback(remove, 1200);
 }
 
 function queueRoundHoneyReset() {
@@ -1495,6 +1558,26 @@ function getAppleTreeGrowthStage(tileState) {
   }
 
   return appleTreeStateAssetMap[tileState.growthStage] ? tileState.growthStage : "blossom";
+}
+
+function getAppleTreeStageCountdown(tileState) {
+  if (!tileState || tileState.type !== "apple_tree" || !tileState.revealed) {
+    return null;
+  }
+  const stage = getAppleTreeGrowthStage(tileState);
+  if (stage === "blossom") {
+    return tileState.pendingFruit ? 1 : null;
+  }
+  if (stage === "fruit") {
+    const count = tileState.fruitRoundCount || 1;
+    // count=1 → 下回合 count→2（仍是 fruit），再下回合切 harvested，剩 2 回合
+    // count=2 → 下回合切 harvested，剩 1 回合
+    return Math.max(1, 3 - count);
+  }
+  if (stage === "harvested") {
+    return tileState.pendingReBloom ? 1 : null;
+  }
+  return null;
 }
 
 function hasRevealedNeighbor(tileId) {
@@ -2166,6 +2249,7 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     `
     : getTileVisualMarkup(state, tileAsset);
 
+  const stageCountdown = getAppleTreeStageCountdown(state);
   button.innerHTML = `
     <span class="tile__ring" aria-hidden="true"></span>
     <span class="tile__inner" aria-hidden="true">${innerInnerHtml}</span>
@@ -2174,6 +2258,11 @@ function createTileElement(tile, appearanceFrameMap = {}) {
       visibleDangerCount === null
         ? ""
         : `<span class="tile__danger" aria-hidden="true">${visibleDangerCount}</span>`
+    }
+    ${
+      stageCountdown === null
+        ? ""
+        : `<span class="tile__stage-countdown" aria-hidden="true"><img class="tile__stage-countdown__bg" src="assets/ui/tree_countdown_01.png" alt="" /><span class="tile__stage-countdown__num">${stageCountdown}</span></span>`
     }
     <span class="tile__meta">r${tile.row + 1} · c${tile.col + 1}</span>
   `;
