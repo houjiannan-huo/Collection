@@ -85,10 +85,8 @@ const appleTreeStateAssetMap = {
 const enemyOverlayAsset = "./assets/tiles/Bird_01.png?v=enemy-20260613-1";
 let enemyOverlayDisplayAsset = enemyOverlayAsset;
 const collectFeedbackConfig = {
-  flyDuration: 1000,
-  launchInterval: 140,
-  hudRollDuration: 180,
-  hudResetDelay: 120,
+  flyDuration: 510,
+  launchInterval: 102,
 };
 const comboConfig = {
   timeoutMs: 2500,
@@ -105,16 +103,19 @@ const tileEnemyHitSoundAsset = "./assets/audio/sfx/tile-enemy-hit.wav";
 const comboSoundAsset = "./assets/audio/sfx/sfx-combo.mp3";
 const customCursorAsset = "./assets/ui/cursor/cursor-default.png";
 const beeStaminaConfig = {
+  // 体力限制总开关：false 时不再扣体力、不再自动结算本轮、不再显示体力环
+  // 需要恢复体力限制时，把 enabled 改回 true 即可
+  enabled: false,
   maxPerRun: 8,
   // 是否把“按下起点的那一格”也算作消耗 1 格
   countStartTile: true,
 };
 const settlementSequenceConfig = {
-  staggerMs: 360,        // 相邻得分格之间的间隔
-  intraTileGapMs: 120,   // 同一格内多朵飞花的微错峰（苹果 +3）
-  bounceDurationMs: 400, // 得分格小跳总时长（与 CSS keyframes 同步）
+  staggerMs: 175,        // 相邻得分格之间的间隔（在 206 基础上再快 15%）
+  intraTileGapMs: 88,    // 同一格内多朵飞花的微错峰（苹果 +3）
+  bounceDurationMs: 204, // 得分格小跳总时长（与下方 CSS keyframes 同步）
   bounceHeightPx: 12,    // 得分格跳跃峰值
-  waitFlightsTailMs: 120,// 最后一朵飞花落地后的兜底缓冲
+  waitFlightsTailMs: 88, // 最后一朵飞花落地后的兜底缓冲
 };
 const audioAssetMap = {
   bgmMain: "./assets/audio/bgm/bgm-main.mp3",
@@ -455,14 +456,12 @@ function createInitialGameState(options = {}) {
     flowerHoney: 0,
     appleHoney: 0,
     tulipHoney: 0,
-    roundHoney: 0,
     remainingBees: initialBeeCount,
     isDragging: false,
     dragPointerId: null,
     currentPath: [],
     currentRunVisitedTileIds: new Set(),
     currentRunHarvestedTileIds: new Set(),
-    currentRunHoney: 0,
     pendingScoreList: [],
     isSettling: false,
     scoreBounceTileIds: [],
@@ -483,7 +482,6 @@ function createInitialGameState(options = {}) {
     flipTileIds: [],
     toastMessage: "",
     toastTone: "",
-    totalHoneyPulse: false,
     startPulseTileId: null,
     isGameOver: false,
     isGameWin: false,
@@ -506,13 +504,10 @@ const dom = hasDom
       comboOverlay: document.getElementById("combo-overlay"),
       comboPopup: document.getElementById("combo-popup"),
       comboPopupCount: document.getElementById("combo-popup-count"),
-      totalHoney: document.getElementById("total-honey"),
       goalCard: document.getElementById("goal-card"),
       goalFlower: document.getElementById("goal-flower"),
       goalApple: document.getElementById("goal-apple"),
       goalTulip: document.getElementById("goal-tulip"),
-      roundHoney: document.getElementById("round-honey"),
-      roundHoneyCard: document.getElementById("round-honey-card"),
       beesLeft: document.getElementById("bees-left"),
       beeCounterIcon: document.getElementById("bee-counter-icon"),
       statusText: document.getElementById("status-text"),
@@ -534,12 +529,6 @@ const feedbackState = {
   activeFlights: new Map(),
   flightRafId: null,
   flightCounter: 0,
-  hudDisplayedValue: 0,
-  hudTargetValue: 0,
-  isHudRolling: false,
-  hudRollingFrom: 0,
-  hudRollingTo: 0,
-  shouldResetRoundHoney: false,
   audioContext: null,
 };
 
@@ -977,20 +966,8 @@ function triggerInvalidStartFeedback(tileId, options = {}) {
 function triggerSuccessFeedback(tileId, gainedHoney, options = {}) {
   const { message = gainedHoney > 0 ? `结算成功 +${gainedHoney}` : "采集成功", tone = "success" } = options;
 
-  if (gainedHoney > 0) {
-    gameState.totalHoneyPulse = true;
-  }
-
   triggerStartPulse(tileId);
   showToast(message, tone);
-
-  if (gainedHoney > 0) {
-    scheduleFeedback(() => {
-      gameState.totalHoneyPulse = false;
-      triggerRenderOnly();
-    }, animationDurations.honeyPulse);
-  }
-
 }
 
 function updateGameOverState() {
@@ -1022,44 +999,14 @@ function getStateSnapshot() {
     lastConsumedBee: gameState.lastConsumedBee,
     remainingBees: gameState.remainingBees,
     totalHoney: gameState.totalHoney,
-    roundHoney: gameState.roundHoney,
+    flowerHoney: gameState.flowerHoney,
+    appleHoney: gameState.appleHoney,
+    tulipHoney: gameState.tulipHoney,
     isGameOver: gameState.isGameOver,
     comboCount: comboState.count,
     currentPath: [...gameState.currentPath],
     lastOutcome: gameState.lastOutcome,
   };
-}
-
-function syncRoundHoney(value = gameState.roundHoney) {
-  const nextValue = Math.max(0, Math.trunc(value));
-  feedbackState.hudDisplayedValue = nextValue;
-  feedbackState.hudTargetValue = nextValue;
-  feedbackState.isHudRolling = false;
-  feedbackState.hudRollingFrom = nextValue;
-  feedbackState.hudRollingTo = nextValue;
-  feedbackState.shouldResetRoundHoney = false;
-  gameState.roundHoney = nextValue;
-}
-
-function renderRoundHoneyValue(value, nextValue = null) {
-  if (!dom?.roundHoney) {
-    return;
-  }
-
-  if (nextValue === null || nextValue === undefined || nextValue === value) {
-    dom.roundHoney.className = "hud-roll";
-    dom.roundHoney.textContent = String(value);
-    return;
-  }
-
-  dom.roundHoney.className = "hud-roll hud-roll--animating";
-  dom.roundHoney.innerHTML = `
-    <span class="hud-roll__track" aria-hidden="true">
-      <span class="hud-roll__digit">${value}</span>
-      <span class="hud-roll__digit">${nextValue}</span>
-    </span>
-  `;
-  dom.roundHoney.setAttribute("aria-label", `本轮暂存 ${nextValue}`);
 }
 
 function stopFlowerFlightLoop() {
@@ -1078,12 +1025,11 @@ function clearActiveFlowerFlights() {
 }
 
 function resetCollectionFeedback(options = {}) {
-  const { resetRunToken = false, clearFlights = true, resetDisplay = true } = options;
+  const { resetRunToken = false, clearFlights = true } = options;
 
   clearCollectionTasks();
   feedbackState.nextLaunchAt = 0;
   feedbackState.pendingLaunchCount = 0;
-  feedbackState.shouldResetRoundHoney = false;
 
   if (resetRunToken) {
     feedbackState.currentRunToken += 1;
@@ -1093,12 +1039,11 @@ function resetCollectionFeedback(options = {}) {
     clearActiveFlowerFlights();
   }
 
-  if (resetDisplay) {
-    syncRoundHoney(0);
-    renderRoundHoneyValue(0);
+  if (dom?.goalCard) {
+    dom.goalCard.querySelectorAll(".goal-item.is-collecting").forEach((el) => {
+      el.classList.remove("is-collecting");
+    });
   }
-
-  dom?.roundHoneyCard?.classList.remove("hud-card--collect");
 }
 
 function getOverlayRelativePointFromRect(rect, anchorY = 0.5) {
@@ -1123,12 +1068,21 @@ function getTileFlightOrigin(tileId) {
   return getOverlayRelativePointFromRect(tileElement.getBoundingClientRect(), 0.42);
 }
 
-function getHudCollectTargetPoint() {
-  if (!dom?.roundHoneyCard) {
+function getGoalIconElement(type) {
+  if (!dom) return null;
+  if (type === "flower") return dom.goalFlower?.parentElement || null;
+  if (type === "apple_tree_blossom") return dom.goalApple?.parentElement || null;
+  if (type === "tulip") return dom.goalTulip?.parentElement || null;
+  return null;
+}
+
+function getGoalIconTargetPoint(type) {
+  const el = getGoalIconElement(type);
+  if (!el) {
     return null;
   }
 
-  return getOverlayRelativePointFromRect(dom.roundHoneyCard.getBoundingClientRect(), 0.5);
+  return getOverlayRelativePointFromRect(el.getBoundingClientRect(), 0.5);
 }
 
 function easeOutCubic(value) {
@@ -1322,72 +1276,32 @@ function playCollectSound() {
   });
 }
 
-function playHudCollectFeedback() {
-  if (!dom?.roundHoneyCard) {
+function playGoalCollectFeedback(type) {
+  const el = getGoalIconElement(type);
+  if (!el) {
     return;
   }
 
-  dom.roundHoneyCard.classList.remove("hud-card--collect");
-  void dom.roundHoneyCard.offsetWidth;
-  dom.roundHoneyCard.classList.add("hud-card--collect");
+  el.classList.remove("is-collecting");
+  void el.offsetWidth;
+  el.classList.add("is-collecting");
   scheduleCollectionTask(() => {
-    dom.roundHoneyCard?.classList.remove("hud-card--collect");
+    el.classList.remove("is-collecting");
   }, 360);
 }
 
-function maybeResetRoundHoneyAfterArrival() {
-  const hasPendingVisuals =
-    feedbackState.pendingLaunchCount > 0 ||
-    feedbackState.activeFlights.size > 0 ||
-    feedbackState.isHudRolling ||
-    feedbackState.hudDisplayedValue < feedbackState.hudTargetValue;
-
-  if (!feedbackState.shouldResetRoundHoney || hasPendingVisuals) {
+function commitGoalArrival(type) {
+  if (type === "flower") {
+    gameState.flowerHoney += 1;
+  } else if (type === "apple_tree_blossom") {
+    gameState.appleHoney += 1;
+  } else if (type === "tulip") {
+    gameState.tulipHoney += 1;
+  } else {
     return;
   }
-
-  feedbackState.shouldResetRoundHoney = false;
-  scheduleCollectionTask(() => {
-    if (gameState.isDragging) {
-      return;
-    }
-
-    syncRoundHoney(0);
-    renderRoundHoneyValue(0);
-  }, collectFeedbackConfig.hudResetDelay);
-}
-
-function runNextHudIncrement() {
-  if (feedbackState.hudDisplayedValue >= feedbackState.hudTargetValue) {
-    feedbackState.isHudRolling = false;
-    feedbackState.hudRollingFrom = feedbackState.hudDisplayedValue;
-    feedbackState.hudRollingTo = feedbackState.hudDisplayedValue;
-    renderRoundHoneyValue(feedbackState.hudDisplayedValue);
-    maybeResetRoundHoneyAfterArrival();
-    return;
-  }
-
-  feedbackState.isHudRolling = true;
-  const currentValue = feedbackState.hudDisplayedValue;
-  const nextValue = currentValue + 1;
-  feedbackState.hudRollingFrom = currentValue;
-  feedbackState.hudRollingTo = nextValue;
-  renderRoundHoneyValue(currentValue, nextValue);
-
-  scheduleCollectionTask(() => {
-    feedbackState.hudDisplayedValue = nextValue;
-    gameState.roundHoney = nextValue;
-    renderRoundHoneyValue(nextValue);
-    runNextHudIncrement();
-  }, collectFeedbackConfig.hudRollDuration);
-}
-
-function enqueueTempHoneyIncrement(amount = 1) {
-  feedbackState.hudTargetValue += amount;
-
-  if (!feedbackState.isHudRolling) {
-    runNextHudIncrement();
-  }
+  gameState.totalHoney = gameState.flowerHoney + gameState.appleHoney + gameState.tulipHoney;
+  renderGoalHUD();
 }
 
 function finishFlowerFlight(flightId) {
@@ -1399,15 +1313,14 @@ function finishFlowerFlight(flightId) {
 
   flight.element.remove();
   feedbackState.activeFlights.delete(flightId);
-  playHudCollectFeedback();
+  commitGoalArrival(flight.type);
+  playGoalCollectFeedback(flight.type);
   playCollectSound();
-  enqueueTempHoneyIncrement(1);
-  maybeResetRoundHoneyAfterArrival();
 }
 
-function animateFlowerToHud(startPoint, runToken) {
+function animateFlowerToGoal(startPoint, runToken, type) {
   if (!dom?.fxOverlay) {
-    enqueueTempHoneyIncrement(1);
+    commitGoalArrival(type);
     return;
   }
 
@@ -1415,12 +1328,12 @@ function animateFlowerToHud(startPoint, runToken) {
     return;
   }
 
-  const endPoint = getHudCollectTargetPoint();
+  const endPoint = getGoalIconTargetPoint(type);
 
   if (!startPoint || !endPoint) {
-    playHudCollectFeedback();
+    commitGoalArrival(type);
+    playGoalCollectFeedback(type);
     playCollectSound();
-    enqueueTempHoneyIncrement(1);
     return;
   }
 
@@ -1445,13 +1358,14 @@ function animateFlowerToHud(startPoint, runToken) {
     duration: collectFeedbackConfig.flyDuration,
     rotationStart: -18 + Math.random() * 14,
     rotationDelta: 22 + Math.random() * 26,
+    type,
   });
   ensureFlightLoop();
 }
 
-function spawnFlowerFlyEffect(tileId) {
-  if (!hasDom || !dom?.fxOverlay || !dom.roundHoneyCard) {
-    syncRoundHoney(gameState.currentRunHoney);
+function spawnFlowerFlyEffect(tileId, type) {
+  if (!hasDom || !dom?.fxOverlay || !dom?.goalCard) {
+    commitGoalArrival(type);
     return;
   }
 
@@ -1475,11 +1389,10 @@ function spawnFlowerFlyEffect(tileId) {
     feedbackState.pendingLaunchCount = Math.max(0, feedbackState.pendingLaunchCount - 1);
 
     if (runToken !== feedbackState.currentRunToken) {
-      maybeResetRoundHoneyAfterArrival();
       return;
     }
 
-    animateFlowerToHud(startPoint, runToken);
+    animateFlowerToGoal(startPoint, runToken, type);
   }, delay);
 }
 
@@ -1578,13 +1491,8 @@ function spawnTileConfettiBurst(anchor) {
 }
 
 function queueRoundHoneyReset() {
-  if (!hasDom) {
-    syncRoundHoney(0);
-    return;
-  }
-
-  feedbackState.shouldResetRoundHoney = true;
-  maybeResetRoundHoneyAfterArrival();
+  // 旧的"本轮暂存"已移除，飞花直达目标 icon 后即时提交，
+  // 此处保留空壳以兼容历史调用点，必要时再扩展。
 }
 
 function setTileRevealed(tileId) {
@@ -2127,11 +2035,6 @@ function renderHud() {
   }
 
   renderGoalHUD();
-  if (feedbackState.isHudRolling) {
-    renderRoundHoneyValue(feedbackState.hudRollingFrom, feedbackState.hudRollingTo);
-  } else {
-    renderRoundHoneyValue(gameState.roundHoney);
-  }
   const prevDisplayedBees = Number(dom.beesLeft.dataset.value);
   const nextBees = gameState.remainingBees;
   dom.beesLeft.textContent = String(nextBees);
@@ -2144,7 +2047,6 @@ function renderHud() {
     icon.classList.add("bee-counter__icon--jump");
   }
 
-  dom.goalCard?.classList.toggle("hud-card--pulse", gameState.totalHoneyPulse);
 
   if (dom.statusText) {
     dom.statusText.textContent = gameState.statusText;
@@ -2491,8 +2393,6 @@ function beginRun(tileId, pointerId = null) {
   gameState.trailFail = false;
   gameState.currentRunVisitedTileIds = new Set([tileId]);
   gameState.currentRunHarvestedTileIds = new Set();
-  gameState.currentRunHoney = 0;
-  syncRoundHoney(0);
   gameState.lastSafeTileId = tileId;
   gameState.hasHitEnemy = false;
   gameState.lastOutcome = null;
@@ -2638,7 +2538,7 @@ function playRunSettlementSequence(list, onComplete) {
     const flowerCount = item.amount;
     for (let i = 0; i < flowerCount; i += 1) {
       scheduleCollectionTask(
-        () => spawnFlowerFlyEffect(item.tileId),
+        () => spawnFlowerFlyEffect(item.tileId, item.type),
         i * settlementSequenceConfig.intraTileGapMs
       );
     }
@@ -2660,9 +2560,11 @@ function finalizeSuccessRun(context) {
 
   // 副作用已在 playRunSettlementSequence 的 tick() 中按节奏逐条 commit
   // 这里不再重复 commit，避免破坏“跳到顶点切换阶段图”的视觉
+  // 三桶花蜜（flowerHoney / appleHoney / tulipHoney）改由飞花落地时
+  // 在 commitGoalArrival 内逐朵提交；totalHoney 同步派生为三桶之和。
 
   const gainedHoney = pendingList.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-  // 分项累计：小白花 vs 苹果树花 vs 郁金香
+  // 分项汇总（仅用于 logEvent / statusText，不再写入 gameState）
   let gainedFlower = 0;
   let gainedApple = 0;
   let gainedTulip = 0;
@@ -2677,10 +2579,6 @@ function finalizeSuccessRun(context) {
       gainedTulip += amount;
     }
   });
-  gameState.flowerHoney += gainedFlower;
-  gameState.appleHoney += gainedApple;
-  gameState.tulipHoney += gainedTulip;
-  gameState.totalHoney += gainedHoney;
   gameState.statusText = consumedBee
     ? `本轮成功，获得 ${gainedHoney} 花蜜。`
     : "本轮未采集，蜜蜂未消耗。";
@@ -2754,8 +2652,7 @@ function completeRun(outcome) {
     gameState.pendingScoreList = [];
     gameState.lastEndedTileId = nextStartTileId;
     gameState.currentStartTileId = null;
-    gameState.currentRunHoney = 0;
-    resetCollectionFeedback({ resetRunToken: true, clearFlights: true, resetDisplay: true });
+    resetCollectionFeedback({ resetRunToken: true, clearFlights: true });
     gameState.statusText = consumedBee ? "踩到天敌，本轮失败。" : "本轮失败，蜜蜂未消耗。";
     showToast(gameState.statusText, consumedBee ? "fail" : "info");
     logEvent("本轮失败结算", {
@@ -2790,7 +2687,6 @@ function completeRun(outcome) {
   const pendingListSnapshot = gameState.pendingScoreList.slice();
   gameState.lastEndedTileId = nextStartTileId;
   gameState.currentStartTileId = null;
-  gameState.currentRunHoney = 0;
   gameState.isDragging = false;
   gameState.dragPointerId = null;
   gameState.currentPath = [];
@@ -2989,8 +2885,9 @@ function extendRun(tileId) {
   playTileRevealSound();
 
   // 体力消耗：仅在“本轮第一次踩到这个地块”时扣 1 格体力；同轮复访免费
+  // beeStaminaConfig.enabled = false 时完全跳过体力扣减与自动结算
   let justExhausted = false;
-  if (isFirstVisitThisRun) {
+  if (beeStaminaConfig.enabled && isFirstVisitThisRun) {
     gameState.beeStamina = Math.max(0, gameState.beeStamina - 1);
     justExhausted = gameState.beeStamina === 0 && !gameState.beeStaminaExhausted;
     if (gameState.beeStamina === 0) {
@@ -3291,6 +3188,11 @@ function setBeeStaminaDisplay(ratio, exhausted) {
 }
 
 function syncBeeStaminaFromState() {
+  if (!beeStaminaConfig.enabled) {
+    // 体力总开关关闭：显示 100%（满环）但不应被看见，配合 CSS 隐藏体力环
+    setBeeStaminaDisplay(1, false);
+    return;
+  }
   const max = beeStaminaConfig.maxPerRun || 1;
   const ratio = Math.max(0, Math.min(1, gameState.beeStamina / max));
   setBeeStaminaDisplay(ratio, gameState.beeStaminaExhausted);
@@ -3377,10 +3279,6 @@ function syncDebugHandle() {
         nextLaunchAt: feedbackState.nextLaunchAt,
         pendingLaunchCount: feedbackState.pendingLaunchCount,
         activeFlightCount: feedbackState.activeFlights.size,
-        hudDisplayedValue: feedbackState.hudDisplayedValue,
-        hudTargetValue: feedbackState.hudTargetValue,
-        isHudRolling: feedbackState.isHudRolling,
-        shouldResetRoundHoney: feedbackState.shouldResetRoundHoney,
       };
     },
     get contentSummary() {

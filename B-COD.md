@@ -562,3 +562,49 @@
 
 ### 自检
 - `node --check app.js` 通过
+
+---
+
+## 模块：飞花直达目标 icon + 移除"本轮暂存"
+- 任务 ID：`B-COD-HUD-GOAL-COLLECT-01`
+- 目标：删除"本轮暂存"卡片，让飞花飞行终点按 tile 类型路由到对应目标 icon；落地即提交分项花蜜并播放 icon 弹跳 + burst
+
+### 已实施改动
+- `index.html`
+  - 删除 `#round-honey-card` 整段
+  - 每个 `.goal-item` 新增 `<span class="goal-item__burst" aria-hidden="true">` 用于到达爆点
+  - 样式版本 bump 为 `style.css?v=goal-arrival-20260615-1`
+- `style.css`
+  - 删除 `.hud-card--secondary`、`.hud-card--secondary.hud-card--collect`、`.hud-roll*`、`.hud-collect-burst`、`.hud-card--primary strong`、`.hud-card--primary.hud-card--pulse strong` 及窄屏断点对应规则
+  - 删除 `@keyframes hud-roll-up / hud-collect-bounce / hud-collect-burst / honey-pulse`
+  - 新增 `.goal-item__icon` 默认 transform-origin / transition
+  - 新增 `.goal-item.is-collecting .goal-item__icon` 播 `goal-collect-bounce`
+  - 新增 `.goal-item__burst` 与 `.goal-item.is-collecting .goal-item__burst` 播 `goal-collect-burst`
+  - 新增 `@keyframes goal-collect-bounce`（峰值 1.5）与 `goal-collect-burst`
+- `app.js`
+  - 状态裁剪：删除 `gameState.roundHoney / currentRunHoney / totalHoneyPulse`、`feedbackState.hudDisplayedValue / hudTargetValue / isHudRolling / hudRollingFrom / hudRollingTo / shouldResetRoundHoney`、`collectFeedbackConfig.hudRollDuration / hudResetDelay`
+  - dom 裁剪：删除 `dom.totalHoney / roundHoney / roundHoneyCard`
+  - 函数裁剪：删除 `syncRoundHoney / renderRoundHoneyValue / runNextHudIncrement / enqueueTempHoneyIncrement / maybeResetRoundHoneyAfterArrival / playHudCollectFeedback / getHudCollectTargetPoint / animateFlowerToHud`
+  - 新增 `commitGoalArrival(type)`：按类型 `flowerHoney/appleHoney/tulipHoney += 1`，并令 `gameState.totalHoney = 三桶之和`，最后 `renderGoalHUD()`
+  - 新增 `getGoalIconElement(type) / getGoalIconTargetPoint(type)`：按 type 选 `#goal-flower / #goal-apple / #goal-tulip` 父节点取到达坐标
+  - 新增 `playGoalCollectFeedback(type)`：对应 `.goal-item` 加 `is-collecting`，360ms 移除
+  - `animateFlowerToGoal(start, runToken, type)` 替换 `animateFlowerToHud`，并把 `type` 写入 flight 元数据
+  - `spawnFlowerFlyEffect(tileId, type)` 增加 type 参数；保底分支直接 `commitGoalArrival(type)`
+  - `finishFlowerFlight` 改为：`commitGoalArrival(flight.type) + playGoalCollectFeedback(flight.type) + playCollectSound()`
+  - `finalizeSuccessRun` 不再 bulk add 三桶与 totalHoney；保留 gainedHoney 用于 statusText / logEvent
+  - 调用点 `spawnFlowerFlyEffect(item.tileId, item.type)`
+  - `queueRoundHoneyReset` 保留为兼容空壳
+  - `resetCollectionFeedback` 移除 resetDisplay 参数，转为清理任何 `.goal-item.is-collecting`
+  - `triggerSuccessFeedback` 删除 `totalHoneyPulse` 相关代码
+  - debug snapshot 同步清理（去掉 hudDisplayedValue / hudTargetValue / isHudRolling / shouldResetRoundHoney）
+
+### 规则与时序
+- 每朵飞花落地都即时 -1 对应目标剩余数（视觉与逻辑 1:1）
+- 三桶花蜜由 commit 在每次落地时累加；通关检查仍在 finalizeSuccessRun（已在所有飞行结束后）
+- 失败路径不进入 settlement 序列，无 flight 触发，自然不会提交
+
+### 范围说明
+- `Collection/` 子目录是历史拷贝，本次未同步修改
+
+### 自检
+- `node --check app.js` 通过
