@@ -1422,6 +1422,37 @@ function spawnFlowerFlyEffect(tileId) {
   }, delay);
 }
 
+function spawnTilePopupText(tileId, amount) {
+  if (!hasDom || !dom?.fxOverlay || !(amount > 0)) {
+    return;
+  }
+
+  const tileElement = dom?.board?.querySelector(`[data-tile-id="${tileId}"]`);
+  if (!tileElement) {
+    return;
+  }
+
+  const anchor = getOverlayRelativePointFromRect(tileElement.getBoundingClientRect(), 0);
+  if (!anchor) {
+    return;
+  }
+
+  const element = document.createElement("div");
+  element.className = "tile-popup";
+  element.textContent = `+${amount}`;
+  element.style.left = `${anchor.x}px`;
+  element.style.top = `${anchor.y}px`;
+  dom.fxOverlay.appendChild(element);
+
+  const remove = () => {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  };
+  element.addEventListener("animationend", remove, { once: true });
+  scheduleFeedback(remove, 900);
+}
+
 function queueRoundHoneyReset() {
   if (!hasDom) {
     syncRoundHoney(0);
@@ -2336,6 +2367,7 @@ function playRunSettlementSequence(list, onComplete) {
     cursor += 1;
 
     triggerScoreBounce(item.tileId);
+    spawnTilePopupText(item.tileId, item.amount);
     const flowerCount = item.amount;
     for (let i = 0; i < flowerCount; i += 1) {
       scheduleCollectionTask(
