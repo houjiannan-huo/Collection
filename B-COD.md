@@ -722,3 +722,110 @@
 - 不做"被吃植被退还花蜜"
 - 不做青虫专属 toast / 警告 / 起跳烟雾
 - `Collection/` 子目录是历史拷贝，本次未同步修改
+---
+
+## B-COD-FLOWER-COLORS-01：小黄花 + 小红花
+
+任务来源：A-PLN.md `A-PLN-FLOWER-COLORS-01`
+
+### 改动清单
+
+- `app.js`
+  - `tileTypeOrder` 加 `"flower_yellow"`, `"flower_red"`（放在 `flower` 之后）
+  - `tileAssetMap` 加两类（fallback 用 `tile-flower.png`）
+  - 新增 `flowerYellowStageAssetMap` / `flowerRedStageAssetMap`（带 `?v=flora-20260616-1` 缓存绕过）
+  - 新增 `flowerYellowFlyAsset` / `flowerRedFlyAsset`（指向 icon_flower_02/03.png）
+  - `createTileTypeSummary` / 默认全局 `tileTypeRatioBaseCounts` / 默认全局 `goalTargets` 加两个字段
+  - `getInitialGrowthStage` 加两类 → "bloom"
+  - 新增 `getFlowerYellowStage` / `getFlowerRedStage`
+  - `isSafeTileType` 包含两类
+  - `getTileTypeLabel` 加 "小黄花" / "小红花"
+  - `getFlightAssetForType` 加 `flower_yellow` / `flower_red`
+  - `assignRandomTileTypes` 新增 yellow / red 候选池（caterpillar 后、flower 前）
+  - `validateTypeMap` 加两类校验
+  - `getSafeTileOverlayMarkup` 加两类分支：复用 `.tile__image--flower` 主样式 + `.tile__image--flower-yellow/red` 标识 class + `.tile__image--flower-{stage}` 阶段定位
+  - `enqueueTileCollection` 加两类分支：bloom → amount=1 + advance-flower-yellow/red-to-sprout + combo；sprout → amount=0 + silentBounce + advance-flower-yellow/red-to-bloom
+  - `commitOneSideEffect` 加 4 个 sideEffect 分支
+  - `getGoalIconElement` 加两个映射
+  - `commitGoalArrival` 加两个分支；`totalHoney` 公式扩展到 6 桶
+  - `createInitialGameState` 加 `flowerYellowHoney: 0` `flowerRedHoney: 0`
+  - `dom` 加 6 个新引用（3 num + 3 item）
+  - `renderGoalHUD` 渲染两个新数字与 is-done class
+  - `GOAL_LABEL_MAP` / `GOAL_STATE_KEY` / `getActiveGoalKeys` / `applyGoalVisibility` 加两个 key
+  - `getStateSnapshot` / `finalizeSuccessRun` gainedXxx 拆分 / level-result logEvent payload 加两个字段
+  - `finalizeSuccessRun` 通关判定加 2 个 AND（黄 ≥ 目标 && 红 ≥ 目标）
+  - 12 关 `levelConfigs` 全部加 `flower_yellow: 0, flower_red: 0` 到 `tileTypeRatioBaseCounts` 与 `goalTargets`；L5 设 4/3/3 + goal 10/10/10
+  - `runCaterpillarMovementsAfterRound` 的 `VEGETATION_TYPES` 加两类
+- `index.html`
+  - `<section class="goal-card">` 加 2 个 `<div class="goal-item">`：data-goal="flower-yellow" / "flower-red"，对应 `#goal-flower-yellow` / `#goal-flower-red` num 节点
+- `style.css`
+  - 不新增规则；黄/红花复用 `.tile__image--flower` 主样式 + `.tile__image--flower-{stage}` 阶段定位
+
+### 规则与时序
+- 黄花 / 红花完全照搬白花机制（bloom→sprout, sprout→bloom, +1 蜜, Combo, silentBounce）
+- 飞花到达 HUD 走对应颜色目标 icon，落地时累加对应 honey 桶
+- 通关需 3 桶都达标
+- 青虫吃黄/红花生效（VEGETATION_TYPES 已扩展）
+
+### 自检
+- `node --check app.js` 通过
+- 节点级模拟（L5 + seed=77）：
+  - 棋盘汇总：`{flower_yellow:3, flower_red:3, flower:4, empty:1, bee:1, caterpillar:1}` 共 13 ✅
+  - goalTargets：`flower:10 / flower_yellow:10 / flower_red:10` ✅
+  - 黄花 bloom enqueue → amount=1 + advance-flower-yellow-to-sprout ✅
+  - commit → sprout ✅
+  - 黄花 sprout enqueue → amount=0 silentBounce + advance-flower-yellow-to-bloom ✅
+  - commit → bloom ✅
+
+### 范围说明
+- 本轮只做 yellow / red，沿用白花同套机制
+- 不动 bee / apple_tree / tulip / caterpillar 自身逻辑
+- icon_flower_04/05、icon_tulip_02/03 仍按"预留"对待
+- 仅 L5 引入；其它 11 关字段补 0、目标不变
+- `Collection/` 子目录历史拷贝未同步
+---
+
+## B-COD-TULIP-WHITE-01：白色郁金香
+
+任务来源：A-PLN.md `A-PLN-TULIP-WHITE-01`
+
+### 改动清单
+
+- \`app.js\`
+  - \`tileTypeOrder\` 加 \`"tulip_white"\`
+  - 新增 \`tulipWhiteStageAssetMap\` / \`tulipWhiteFlyAsset\`（带缓存绕过 ?v=tulip-20260616-1）
+  - \`tileAssetMap\` 加 fallback
+  - \`createTileTypeSummary\` / 默认 \`tileTypeRatioBaseCounts\` / \`goalTargets\` 加字段
+  - \`getInitialGrowthStage\` / \`getTulipWhiteStage\` / \`isSafeTileType\` / \`getTileTypeLabel\` / \`getFlightAssetForType\` 全部扩展
+  - \`assignRandomTileTypes\` 加 tulip_white 候选池（在 tulip 之后）
+  - \`validateTypeMap\` 加校验
+  - \`getSafeTileOverlayMarkup\` 新增 tulip_white 分支（复用 .tile__image--tulip 主样式 + .tile__image--tulip-white 标识）
+  - \`enqueueTileCollection\` 加分支：bloom amount=2 advance-tulip-white-to-sprout + combo；sprout amount=0 silentBounce advance-tulip-white-to-bloom
+  - \`commitOneSideEffect\` 加 2 个新 sideEffect 分支
+  - \`getGoalIconElement\` 加映射；\`commitGoalArrival\` 加分支；totalHoney 扩为 7 桶
+  - \`createInitialGameState\` 加 \`tulipWhiteHoney: 0\`
+  - \`dom\` 加 2 个新引用
+  - \`renderGoalHUD\` 渲染新数字与 is-done
+  - \`GOAL_LABEL_MAP\` / \`GOAL_STATE_KEY\` / \`getActiveGoalKeys\` / \`applyGoalVisibility\` 加 key
+  - \`honeyGoalTarget\` 公式加 tulip_white
+  - \`getStateSnapshot\` / \`finalizeSuccessRun\` gainedTulipWhite + payload 加字段
+  - 通关判定加 \`tulipWhiteHoney >= goalTargets.tulip_white\`
+  - 12 关 levelConfigs 全部加 \`tulip_white: 0\`；L5 设 1 + goal 4，并把白花从 4 → 3（让出 1 格）
+  - \`runCaterpillarMovementsAfterRound\` 的 \`VEGETATION_TYPES\` 加 \`"tulip_white"\`
+- \`index.html\`
+  - 在 \`tulip\` goal-item 后加 \`data-goal="tulip-white"\` 项，指向 \`#goal-tulip-white\` + \`icon_tulip_03.png\`
+
+### 自检
+- \`node --check app.js\` 通过
+- 节点级模拟 L5 (seed=88)：
+  - 棋盘：\`{flower:3, flower_yellow:3, flower_red:3, tulip_white:1, bee:1, caterpillar:1, empty:1}\` 共 13 ✅
+  - goalTargets：\`flower:10 / flower_yellow:10 / flower_red:10 / tulip_white:4\` ✅
+  - 白郁 bloom enqueue → amount=2 + advance-tulip-white-to-sprout ✅
+  - commit → sprout ✅
+  - 白郁 sprout enqueue → amount=0 silentBounce + advance-tulip-white-to-bloom ✅
+  - commit → bloom ✅
+
+### 范围说明
+- 本轮只做 \`tulip_white\`
+- 其它 11 关只补 0 字段
+- \`Collection/\` 子目录未同步

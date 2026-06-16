@@ -785,3 +785,111 @@
 - 当前状态：✅ 已落地，等 `@B-FIX` 实机回归
 - 下一步：浏览器跑 L5，确认青虫跳跃动画、压扁、吃花、翻牌
 - 阻塞：无
+---
+
+## 任务卡：小黄花 + 小红花（A-PLN-FLOWER-COLORS-01）
+
+- 任务 ID：`A-PLN-FLOWER-COLORS-01`
+- 目标：新增 `flower_yellow`（小黄花）和 `flower_red`（小红花）两类地块，逻辑与小白花 `flower` 完全一致；仅 L5 引入；L5 目标改为 10 白 + 10 黄 + 10 红
+
+### 已确认口径
+
+#### 命名映射
+| 维度 | 白花 | 黄花 | 红花 |
+|---|---|---|---|
+| 类型 | `flower` | `flower_yellow` | `flower_red` |
+| bloom 切图 | `flower_bloom_01.png` | `flower_bloom_02.png` | `flower_bloom_03.png` |
+| sprout 切图 | `flower_sprout_01.png` | `flower_sprout_02.png` | `flower_sprout_03.png` |
+| HUD 图标 | `icon_flower_01.png` | `icon_flower_02.png` | `icon_flower_03.png` |
+| 飞花素材 | `flower-fly.svg` | `icon_flower_02.png` | `icon_flower_03.png` |
+| 花蜜桶 | `flowerHoney` | `flowerYellowHoney` | `flowerRedHoney` |
+| goalTargets 键 | `flower` | `flower_yellow` | `flower_red` |
+
+#### 规则
+- bloom 经过：+1 各色花蜜，触发 Combo + 小跳 + 1 朵飞花，sideEffect 推进 bloom→sprout
+- sprout 经过：0 花蜜，不进 Combo，silentBounce + 顶点切回 bloom
+- 撞鸟失败：3 色花的 pending 一并作废，阶段不推进
+- 同轮重复经过同一格：alreadyInPendingScore 去重
+- 是 safe type：起点可、enemy 不重叠
+- 青虫 VEGETATION_TYPES 含 3 色花（可被吃）
+
+#### 通关条件
+- L5：白 ≥ 10 && 黄 ≥ 10 && 红 ≥ 10
+- 其它 11 关：维持原条件（黄/红 goal=0 不影响）
+
+#### 关卡分布
+| 关 | white | yellow | red | 其它 |
+|---|---|---|---|---|
+| L5 | 4 | 3 | 3 | bee:1 + caterpillar:1 + empty:1 = 13 |
+| L1–L4 / L6–L12 | 维持原值 | 0 | 0 | 维持 |
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-FLOWER-COLORS-01`
+
+### 验收
+1. L5 棋盘可见 4 白 + 3 黄 + 3 红 + 1 蜜 + 1 虫 + 1 空 共 13 格
+2. HUD 显示 6 个目标位（黄/红 隐藏其它 11 关）
+3. 拖过黄花 bloom：+1 黄蜜 + Combo + `icon_flower_02.png` 飞到黄花 HUD 图标；结算后变 sprout
+4. 拖过红花 bloom：+1 红蜜 + Combo + `icon_flower_03.png` 飞到红花 HUD 图标
+5. 拖过黄/红花 sprout：silentBounce + 顶点切回 bloom
+6. 撞鸟：3 色花阶段不推进
+7. 青虫可吃黄/红花
+8. 三桶 ≥ 10 才通关
+9. `node --check app.js` 通过
+
+### Handoff
+- 任务 ID：`A-PLN-FLOWER-COLORS-01`
+- 当前状态：✅ 已落地，等 `@B-FIX` 实机回归
+- 下一步：浏览器跑 L5，确认黄/红花视觉、飞花、HUD、通关条件
+- 阻塞：无；HUD 6 个 goal-item 横排若过挤，可调 `.goal-card` gap / 字号
+---
+
+## 任务卡：白色郁金香（A-PLN-TULIP-WHITE-01）
+
+- 任务 ID：`A-PLN-TULIP-WHITE-01`
+- 目标：新增 `tulip_white`（白色郁金香）地块，逻辑与紫色郁金香 `tulip` 完全一致；仅 L5 引入，目标 4 朵
+
+### 已确认口径
+
+#### 命名与资源
+| 项 | 值 |
+|---|---|
+| 类型 | `tulip_white` |
+| bloom 切图 | `tulip_bloom_03.png` |
+| sprout 切图 | `tulip_sprout_03.png` |
+| HUD 图标 | `icon_tulip_03.png` |
+| 飞花素材 | `icon_tulip_03.png` |
+| 花蜜桶 | `tulipWhiteHoney` |
+| goalTargets 键 | `tulip_white` |
+
+#### 规则
+- bloom：+2、Combo、小跳、2 朵飞花
+- sprout：0、silentBounce、切回 bloom
+- 撞鸟失败：不推进
+- 青虫可吃（VEGETATION_TYPES 已扩展）
+- safe 类型
+
+#### L5 配置
+- 棋盘：3 白花 + 3 黄花 + 3 红花 + 1 白色郁金香 + 1 蜜蜂 + 1 青虫 + 1 空 = 13（LAYOUT_13）
+- 目标：白花 10 / 黄花 10 / 红花 10 / 白色郁金香 4
+
+#### 其它 11 关
+- `tulip_white: 0`，目标 0
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-TULIP-WHITE-01`
+
+### 验收
+1. L5 棋盘可见 1 个白色郁金香 + 其它分布
+2. HUD 显示 7 个目标位（白/黄/红花 + 紫郁金香隐藏 + 白郁金香）
+3. 拖过白郁 bloom：+2 + Combo + 2 朵 `icon_tulip_03.png` 飞到 HUD 白郁图标
+4. sprout：silentBounce + 切回 bloom
+5. 撞鸟：不推进
+6. 青虫可吃白郁金香
+7. 四桶达标才通关（白花 10 + 黄花 10 + 红花 10 + 白郁 4）
+8. `node --check app.js` 通过
+
+### Handoff
+- 任务 ID：`A-PLN-TULIP-WHITE-01`
+- 当前状态：✅ 已落地
+- 下一步：浏览器跑 L5
