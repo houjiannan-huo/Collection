@@ -2306,6 +2306,11 @@ function canEnterTile(tileId) {
     return false;
   }
 
+  // 禁止走回头路：本轮 currentPath 已包含的格子（含起点）不能再次进入
+  if (gameState.currentPath.includes(tileId)) {
+    return false;
+  }
+
   return adjacencyMap[currentTileId].includes(tileId);
 }
 
