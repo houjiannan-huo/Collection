@@ -146,9 +146,9 @@ const levelConfigs = [
   {
     // L5 rest1：零敌人 + 蜂巢首次引入。纯白花海回血。
     id: "L4", name: "第 4 关 · 休息日 · 蜂巢初识", chapter: 0, layout: LAYOUT_13,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 8, flower_yellow: 0, flower_red: 0, apple_tree: 0, tulip: 0, tulip_white: 0, bee: 4, caterpillar: 0, empty: 1 },
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 4, flower_yellow: 0, flower_red: 0, apple_tree: 0, tulip: 0, tulip_white: 0, bee: 2, caterpillar: 0, empty: 7 },
     initialBeeCount: 2,
-    goalTargets: { flower: 16, flower_yellow: 0, flower_red: 0, apple: 0, appleFruit: 0, tulip: 0, tulip_white: 0 },
+    goalTargets: { flower: 6, flower_yellow: 0, flower_red: 0, apple: 0, appleFruit: 0, tulip: 0, tulip_white: 0 },
     enemyPlacementRule: "default",
     hooks: "回血：纯白花海 + 首次见到蜂巢",
     intro: "没有鸟。盘上多了一个蜂巢——同一格经过两次会送你 1 只蜜蜂。",
@@ -1010,6 +1010,7 @@ const dom = hasDom
       levelSelectOverlay: document.getElementById("level-select-overlay"),
       levelSelectClose: document.getElementById("level-select-close"),
       levelSelectGrid: document.getElementById("level-select-grid"),
+      levelBanner: document.getElementById("level-banner"),
     }
   : null;
 
@@ -2979,6 +2980,15 @@ function applyGoalVisibility() {
   alignBeeCounterToGoals();
 }
 
+function renderLevelBanner() {
+  if (!dom?.levelBanner) return;
+  // 横幅只展示"第 X 关"，副标题（如 "鸟来了"）从 cfg.name 里剥掉
+  const text = `第 ${currentLevelIndex + 1} 关`;
+  if (dom.levelBanner.textContent !== text) {
+    dom.levelBanner.textContent = text;
+  }
+}
+
 function renderHud() {
   if (!dom) {
     return;
@@ -2986,6 +2996,7 @@ function renderHud() {
 
   applyGoalVisibility();
   renderGoalHUD();
+  renderLevelBanner();
   const prevDisplayedBees = Number(dom.beesLeft.dataset.value);
   const nextBees = gameState.remainingBees;
   dom.beesLeft.textContent = String(nextBees);
