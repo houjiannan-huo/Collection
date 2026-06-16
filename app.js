@@ -1359,6 +1359,10 @@ function playComboSound() {
   }
   comboState.lastSoundAt = now;
 
+  if (playSfxBuffer(comboSoundAsset)) {
+    return;
+  }
+
   if (typeof Audio !== "undefined") {
     try {
       const instance = comboSoundTemplate ? comboSoundTemplate.cloneNode(true) : new Audio(comboSoundAsset);
@@ -1366,6 +1370,17 @@ function playComboSound() {
       if (playResult && typeof playResult.catch === "function") {
         playResult.catch(() => playComboSoundSynth());
       }
+      instance.addEventListener(
+        "ended",
+        () => {
+          try {
+            instance.src = "";
+          } catch (_error) {
+            // 忽略
+          }
+        },
+        { once: true }
+      );
       return;
     } catch (_error) {
       // fallback below
@@ -1672,6 +1687,95 @@ function primeCollectAudio() {
   primeTileRevealSound();
   primeTileEnemyHitSound();
   primeComboSound();
+  // 预先 decode 到 AudioBuffer 池，后续以 BufferSource 播放，
+  // 不再每次 cloneNode HTMLAudioElement（iOS 上会累积 AVAudioPlayer 实例）。
+  preloadSfxBuffer(tileRevealSoundAsset);
+  preloadSfxBuffer(tileEnemyHitSoundAsset);
+  preloadSfxBuffer(comboSoundAsset);
+}
+
+// === WebAudio SFX 缓冲池 ===
+const sfxBufferCache = new Map(); // url -> AudioBuffer
+const sfxBufferLoading = new Map(); // url -> Promise<AudioBuffer | null>
+
+function preloadSfxBuffer(url) {
+  if (!url) {
+    return Promise.resolve(null);
+  }
+  if (sfxBufferCache.has(url)) {
+    return Promise.resolve(sfxBufferCache.get(url));
+  }
+  if (sfxBufferLoading.has(url)) {
+    return sfxBufferLoading.get(url);
+  }
+  const audioContext = ensureCollectAudioContext();
+  if (!audioContext || typeof fetch !== "function") {
+    return Promise.resolve(null);
+  }
+  const promise = fetch(url)
+    .then((resp) => (resp.ok ? resp.arrayBuffer() : Promise.reject(new Error("sfx fetch failed"))))
+    .then(
+      (buf) =>
+        new Promise((resolve, reject) => {
+          // Safari 旧版只支持回调式 decodeAudioData
+          try {
+            const ret = audioContext.decodeAudioData(buf, resolve, reject);
+            if (ret && typeof ret.then === "function") {
+              ret.then(resolve, reject);
+            }
+          } catch (error) {
+            reject(error);
+          }
+        })
+    )
+    .then((decoded) => {
+      sfxBufferCache.set(url, decoded);
+      sfxBufferLoading.delete(url);
+      return decoded;
+    })
+    .catch(() => {
+      sfxBufferLoading.delete(url);
+      return null;
+    });
+  sfxBufferLoading.set(url, promise);
+  return promise;
+}
+
+function playSfxBuffer(url, options = {}) {
+  const { volume = 1 } = options;
+  const audioContext = ensureCollectAudioContext();
+  if (!audioContext) {
+    return false;
+  }
+  const buffer = sfxBufferCache.get(url);
+  if (!buffer) {
+    // 首次未就绪，发起 preload；本次播放交给 HTMLAudio fallback
+    preloadSfxBuffer(url);
+    return false;
+  }
+  if (audioContext.state === "suspended") {
+    audioContext.resume().catch(() => {});
+  }
+  try {
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    const gain = audioContext.createGain();
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(audioContext.destination);
+    source.onended = () => {
+      try {
+        source.disconnect();
+        gain.disconnect();
+      } catch (_error) {
+        // 忽略
+      }
+    };
+    source.start(0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }
 
 let tileRevealSoundTemplate = null;
@@ -1692,6 +1796,9 @@ function primeTileRevealSound() {
 }
 
 function playTileRevealSound() {
+  if (playSfxBuffer(tileRevealSoundAsset)) {
+    return;
+  }
   if (typeof Audio === "undefined") {
     return;
   }
@@ -1704,6 +1811,17 @@ function playTileRevealSound() {
     if (playResult && typeof playResult.catch === "function") {
       playResult.catch(() => {});
     }
+    instance.addEventListener(
+      "ended",
+      () => {
+        try {
+          instance.src = "";
+        } catch (_error) {
+          // 忽略
+        }
+      },
+      { once: true }
+    );
   } catch (_error) {
     // 失败静默，不影响主流程
   }
@@ -1727,6 +1845,9 @@ function primeTileEnemyHitSound() {
 }
 
 function playTileEnemyHitSound() {
+  if (playSfxBuffer(tileEnemyHitSoundAsset)) {
+    return;
+  }
   if (typeof Audio === "undefined") {
     return;
   }
@@ -1739,6 +1860,17 @@ function playTileEnemyHitSound() {
     if (playResult && typeof playResult.catch === "function") {
       playResult.catch(() => {});
     }
+    instance.addEventListener(
+      "ended",
+      () => {
+        try {
+          instance.src = "";
+        } catch (_error) {
+          // 忽略
+        }
+      },
+      { once: true }
+    );
   } catch (_error) {
     // 失败静默，不影响主流程
   }
@@ -2970,6 +3102,17 @@ function createTileElement(tile, appearanceFrameMap = {}) {
   return button;
 }
 
+// C1: 增量化 renderBoard —— 避免每次拖动 innerHTML="" 整盘重建。
+// 保留 createTileElement 用于首次创建；后续仅 diff class/dataset/style 和
+// 内层 HTML 签名，未变化的 tile 不触发任何 DOM 写入。
+const tileNodeCache = new Map(); // tileId -> HTMLButtonElement
+const tileNodeSigCache = new Map(); // tileId -> 内层签名字符串
+
+function resetTileNodeCache() {
+  tileNodeCache.clear();
+  tileNodeSigCache.clear();
+}
+
 function renderBoard() {
   if (!dom?.board) {
     return;
@@ -2979,19 +3122,209 @@ function renderBoard() {
   const appearanceFrameMap = buildTileAppearanceFrameMap(visibleTileIds);
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
-  dom.board.innerHTML = "";
+
   const fragment = document.createDocumentFragment();
+  const currentVisibleIds = new Set();
 
   tiles.forEach((tile) => {
     if (!visibleTileIds.has(tile.id)) {
       return;
     }
+    currentVisibleIds.add(tile.id);
 
-    fragment.appendChild(createTileElement(tile, appearanceFrameMap));
+    let button = tileNodeCache.get(tile.id);
+    if (!button || !button.isConnected) {
+      button = createTileElement(tile, appearanceFrameMap);
+      // 首次创建时同步内层签名，避免后续 update 误判
+      tileNodeSigCache.set(tile.id, computeTileInnerSignature(tile));
+      tileNodeCache.set(tile.id, button);
+      fragment.appendChild(button);
+    } else {
+      updateTileElement(tile, button, appearanceFrameMap);
+    }
   });
 
-  dom.board.appendChild(fragment);
+  // 移除已不可见或已不在 tiles 集合内的缓存节点
+  for (const [tileId, button] of tileNodeCache) {
+    if (!currentVisibleIds.has(tileId)) {
+      try {
+        button.remove();
+      } catch (_error) {
+        // 忽略
+      }
+      tileNodeCache.delete(tileId);
+      tileNodeSigCache.delete(tileId);
+    }
+  }
+
+  if (fragment.childNodes.length > 0) {
+    dom.board.appendChild(fragment);
+  }
   renderBoardTrail();
+}
+
+// 计算 tile 内层结构的签名；用于决定是否需要重写 innerHTML。
+function computeTileInnerSignature(tile) {
+  const state = gameState.tileStateMap[tile.id];
+  if (!state) return "";
+  const isRevealed = state.revealed;
+  const isFlipping = gameState.flipTileIds.includes(tile.id);
+  const visibleDangerCount = getVisibleDangerCount(tile.id);
+  const tileAsset = getTileAsset(state);
+  const stageCountdown = getAppleTreeStageCountdown(state);
+  // 内层结构受这些字段影响：revealed/type/growthStage/asset/flipping/dangerCount/stageCountdown/id
+  return [
+    tile.id,
+    isRevealed ? 1 : 0,
+    state.type ?? "",
+    state.growthStage ?? "",
+    tileAsset,
+    isFlipping ? 1 : 0,
+    visibleDangerCount === null ? "" : visibleDangerCount,
+    stageCountdown === null ? "" : stageCountdown,
+  ].join("|");
+}
+
+function updateTileElement(tile, button, appearanceFrameMap = {}) {
+  const state = gameState.tileStateMap[tile.id];
+  if (!state) return;
+
+  const isRevealed = state.revealed;
+  const displayStartTileId = getDisplayStartTileId();
+  const isStart = tile.id === displayStartTileId;
+  const isInPath = gameState.currentPath.includes(tile.id);
+  const isEnemy = isRevealed && state.type === "enemy";
+  const isShaking = gameState.shakeTileIds.includes(tile.id);
+  const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
+  const isStartPulse = tile.id === gameState.startPulseTileId;
+  const isFlipping = gameState.flipTileIds.includes(tile.id);
+  const isScoreBouncing = gameState.scoreBounceTileIds.includes(tile.id);
+  const isStartCandidate =
+    !gameState.isDragging && !gameState.isGameOver && isValidStartCandidate(tile.id);
+  const appearanceMeta = appearanceFrameMap[tile.id] ?? null;
+  const visibleDangerCount = getVisibleDangerCount(tile.id);
+  const tileAsset = getTileAsset(state);
+  const ariaState = isRevealed
+    ? `已解锁，${getTileTypeLabel(state.type)}，周围天敌 ${state.dangerCount}`
+    : visibleDangerCount === null
+      ? "未解锁"
+      : `未解锁，边界数字 ${visibleDangerCount}`;
+
+  const nextClassName = [
+    "tile",
+    isRevealed ? "tile--revealed" : "tile--locked",
+    isStart ? "tile--start" : "",
+    isStartCandidate ? "tile--start-candidate" : "",
+    isStartPulse ? "tile--start-pulse" : "",
+    isInvalidFlashing ? "tile--invalid-flash" : "",
+    isInPath ? "tile--path" : "",
+    isEnemy ? "tile--enemy" : "",
+    isShaking ? "tile--shake" : "",
+    isFlipping ? "tile--flipping" : "",
+    isScoreBouncing ? "tile--score-bounce" : "",
+    appearanceMeta ? "tile--appearing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (button.className !== nextClassName) {
+    button.className = nextClassName;
+  }
+
+  const leftStr = `${boardMetrics.leftPadding + tile.slotX * boardMetrics.xUnit}px`;
+  const topStr = `${boardMetrics.topPadding + tile.row * boardMetrics.yUnit}px`;
+  if (button.style.getPropertyValue("--left") !== leftStr) {
+    button.style.setProperty("--left", leftStr);
+  }
+  if (button.style.getPropertyValue("--top") !== topStr) {
+    button.style.setProperty("--top", topStr);
+  }
+
+  if (appearanceMeta) {
+    button.style.setProperty("--tile-appear-delay", `${appearanceMeta.delayMs}ms`);
+    button.style.setProperty("--tile-appear-duration", `${tileAppearConfig.durationMs}ms`);
+    button.style.setProperty("--tile-appear-start-scale", String(tileAppearConfig.startScale));
+    button.style.setProperty(
+      "--tile-appear-overshoot-scale",
+      String(tileAppearConfig.overshootScale)
+    );
+    button.style.setProperty("--tile-appear-easing", tileAppearConfig.easing);
+  }
+
+  const tileImageValue = `url("${tileAsset}")`;
+  if (button.style.getPropertyValue("--tile-image") !== tileImageValue) {
+    button.style.setProperty("--tile-image", tileImageValue);
+  }
+
+  if (isScoreBouncing) {
+    const startedAt = gameState.scoreBounceStartedAt[tile.id];
+    if (typeof startedAt === "number") {
+      const elapsed = Math.max(0, getNow() - startedAt);
+      button.style.setProperty("--bounce-delay", `${-elapsed}ms`);
+    } else {
+      button.style.setProperty("--bounce-delay", "0ms");
+    }
+  }
+
+  // dataset 增量写入
+  const datasetAssign = (key, value) => {
+    if (button.dataset[key] !== value) {
+      button.dataset[key] = value;
+    }
+  };
+  datasetAssign("tileId", tile.id);
+  datasetAssign("row", String(tile.row));
+  datasetAssign("col", String(tile.col));
+  datasetAssign("slotX", String(tile.slotX));
+  datasetAssign("type", isRevealed ? state.type : "hidden");
+  datasetAssign("growthStage", isRevealed ? state.growthStage ?? "" : "");
+  datasetAssign("revealed", String(isRevealed));
+  datasetAssign("dangerCount", String(state.dangerCount));
+  datasetAssign(
+    "visibleDangerCount",
+    visibleDangerCount === null ? "" : String(visibleDangerCount)
+  );
+  datasetAssign("neighbors", state.neighbors.join(","));
+
+  const nextAria = `${tile.id}，${isStartCandidate ? "可作为起点，" : ""}${ariaState}${
+    isInPath ? "，已在当前路径中" : ""
+  }`;
+  if (button.getAttribute("aria-label") !== nextAria) {
+    button.setAttribute("aria-label", nextAria);
+  }
+
+  // 内层 HTML 仅在签名变化时重写，避免大量重复 image decode
+  const nextSig = computeTileInnerSignature(tile);
+  if (tileNodeSigCache.get(tile.id) !== nextSig) {
+    const innerInnerHtml = isFlipping
+      ? `
+      <span class="tile__face tile__face--front" aria-hidden="true">
+        <img class="tile__image" src="${tileAssetMap.hidden}" alt="" />
+      </span>
+      <span class="tile__face tile__face--back" aria-hidden="true">
+        ${getTileVisualMarkup(state, tileAsset)}
+      </span>
+    `
+      : getTileVisualMarkup(state, tileAsset);
+
+    const stageCountdown = getAppleTreeStageCountdown(state);
+    button.innerHTML = `
+    <span class="tile__ring" aria-hidden="true"></span>
+    <span class="tile__inner" aria-hidden="true">${innerInnerHtml}</span>
+    <span class="tile__label">${tile.id}</span>
+    ${
+      visibleDangerCount === null
+        ? ""
+        : `<span class="tile__danger" aria-hidden="true">${visibleDangerCount}</span>`
+    }
+    ${
+      stageCountdown === null
+        ? ""
+        : `<span class="tile__stage-countdown" aria-hidden="true"><img class="tile__stage-countdown__bg" src="assets/ui/tree_countdown_01.png" alt="" /><span class="tile__stage-countdown__num">${stageCountdown}</span></span>`
+    }
+    <span class="tile__meta">r${tile.row + 1} · c${tile.col + 1}</span>
+  `;
+    tileNodeSigCache.set(tile.id, nextSig);
+  }
 }
 
 const trailSvgNs = "http://www.w3.org/2000/svg";
@@ -3103,6 +3436,11 @@ function restartGame(options = {}) {
     applyLevelConfig(options.levelIndex);
     // 关卡几何变化时，重算 board 尺寸
     computeBoardSize();
+    // 关卡几何/tiles 集合可能整体变化，清掉 tile 节点缓存让 renderBoard 全新建
+    resetTileNodeCache();
+    if (dom?.board) {
+      dom.board.innerHTML = "";
+    }
   }
 
   const nextOptions = {
@@ -3149,9 +3487,7 @@ function renderLevelSelectGrid() {
       card.classList.add("level-select-card--current");
     }
     card.dataset.levelIndex = String(idx);
-    card.innerHTML =
-      `<span class="level-select-card__id">${cfg.name}</span>` +
-      `<span class="level-select-card__hook">${cfg.hooks}</span>`;
+    card.innerHTML = `<span class="level-select-card__id">第 ${idx + 1} 关</span>`;
     grid.appendChild(card);
   });
 }
@@ -4656,6 +4992,7 @@ const bgmState = {
   muted: false,
   hasStarted: false,
   pendingStart: false,
+  wasPlayingBeforeHidden: false,
 };
 
 function readBgmMutedPref() {
@@ -4780,6 +5117,48 @@ function initBgm() {
   }
 
   tryStartBgm();
+  attachVisibilityPowerSavers();
+}
+
+function attachVisibilityPowerSavers() {
+  if (!hasDom) {
+    return;
+  }
+  document.addEventListener("visibilitychange", () => {
+    const hidden = document.visibilityState === "hidden";
+    if (hidden) {
+      if (bgmState.audio && !bgmState.audio.paused) {
+        bgmState.wasPlayingBeforeHidden = true;
+        try {
+          bgmState.audio.pause();
+        } catch (_error) {
+          // 忽略
+        }
+      } else {
+        bgmState.wasPlayingBeforeHidden = false;
+      }
+      const ctx = feedbackState.audioContext;
+      if (ctx && typeof ctx.suspend === "function" && ctx.state === "running") {
+        ctx.suspend().catch(() => {});
+      }
+    } else {
+      if (
+        bgmState.audio &&
+        bgmState.wasPlayingBeforeHidden &&
+        !bgmState.muted
+      ) {
+        const result = bgmState.audio.play();
+        if (result && typeof result.then === "function") {
+          result.catch(() => {});
+        }
+      }
+      bgmState.wasPlayingBeforeHidden = false;
+      const ctx = feedbackState.audioContext;
+      if (ctx && typeof ctx.resume === "function" && ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+    }
+  });
 }
 
 function init() {
