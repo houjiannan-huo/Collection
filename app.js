@@ -356,6 +356,16 @@ const boardMetrics = {
   yUnit: 110,
 };
 const boardDisplayScale = 1.7;
+const fusionLayerConfig = {
+  maxSegments: 32,
+  connectorInsetPx: 38,
+  connectorRadiusPx: 19,
+  fusionPx: 12,
+  hardness: 0.92,
+  activeScaleBoostPx: 4,
+  alpha: 1,
+  color: "#fffdf5",
+};
 
 const hasDom = typeof document !== "undefined";
 
@@ -770,6 +780,8 @@ function createInitialGameState(options = {}) {
     trailPath: [],
     trailFading: false,
     trailFail: false,
+    pathConnectorAnimationStarts: {},
+    pathEndAnimationStarts: {},
     invalidFlashTileIds: [],
     shakeTileIds: [],
     flipTileIds: [],
@@ -2009,6 +2021,335 @@ function getTileBoardCenter(tileId) {
   };
 }
 
+function getVisibleTrailPath() {
+  if (gameState.currentPath.length > 0) {
+    return gameState.currentPath;
+  }
+
+  return gameState.trailPath || [];
+}
+
+function getTrailVisualPalette(pathLength, isFail = false) {
+  if (isFail) {
+    return {
+      ring: "#ffbeb7",
+      edge: "#ff5f58",
+      glow: "rgba(255, 95, 88, 0.72)",
+      trail: "#ff6961",
+      flow: "rgba(255, 220, 216, 0.96)",
+      head: "#ff6e66",
+    };
+  }
+
+  if (pathLength >= 9) {
+    return {
+      ring: "#d8eeff",
+      edge: "#58a8ff",
+      glow: "rgba(88, 168, 255, 0.62)",
+      trail: "#6ab3ff",
+      flow: "rgba(228, 243, 255, 0.98)",
+      head: "#8bc4ff",
+    };
+  }
+
+  if (pathLength >= 5) {
+    return {
+      ring: "#dfffc0",
+      edge: "#52cf70",
+      glow: "rgba(82, 207, 112, 0.62)",
+      trail: "#67dc82",
+      flow: "rgba(231, 255, 214, 0.98)",
+      head: "#8ef19f",
+    };
+  }
+
+  return {
+    ring: "#fffdf5",
+    edge: "#fff1d7",
+    glow: "rgba(255, 249, 228, 0.68)",
+    trail: "#fff8ea",
+    flow: "rgba(255, 255, 255, 0.98)",
+    head: "#ffffff",
+  };
+}
+
+const fusionLayerState = {
+  canvas: null,
+  gl: null,
+  program: null,
+  buffer: null,
+  uniforms: null,
+  isAvailable: false,
+};
+
+function parseHexColorToRgb(hexColor, fallback = [1, 1, 1]) {
+  if (typeof hexColor !== "string") {
+    return fallback;
+  }
+
+  const normalized = hexColor.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return fallback;
+  }
+
+  return [0, 2, 4].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16) / 255);
+}
+
+function createFusionShaderProgram(gl, vertexSource, fragmentSource) {
+  const compileShader = (type, source) => {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(shader);
+      gl.deleteShader(shader);
+      throw new Error(info || "Failed to compile fusion shader");
+    }
+
+    return shader;
+  };
+
+  const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
+  const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  gl.deleteShader(vertexShader);
+  gl.deleteShader(fragmentShader);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const info = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    throw new Error(info || "Failed to link fusion shader");
+  }
+
+  return program;
+}
+
+function ensureFusionLayer() {
+  if (!hasDom || fusionLayerState.canvas) {
+    return fusionLayerState;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "board__fusion-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+
+  const gl = canvas.getContext("webgl", {
+    alpha: true,
+    antialias: true,
+    depth: false,
+    stencil: false,
+    premultipliedAlpha: true,
+  });
+
+  fusionLayerState.canvas = canvas;
+  fusionLayerState.gl = gl;
+
+  if (!gl) {
+    return fusionLayerState;
+  }
+
+  const vertexSource = `
+    attribute vec2 a_position;
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+  const fragmentSource = `
+    precision mediump float;
+
+    const int MAX_FUSION_SEGMENTS = ${fusionLayerConfig.maxSegments};
+    uniform vec2 u_resolution;
+    uniform int u_count;
+    uniform vec4 u_segments[MAX_FUSION_SEGMENTS];
+    uniform float u_scale[MAX_FUSION_SEGMENTS];
+    uniform vec3 u_fusionColor;
+    uniform float u_fusionAlpha;
+    uniform float u_radius;
+    uniform float u_fusion;
+    uniform float u_hardness;
+
+    float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
+      vec2 pa = p - a;
+      vec2 ba = b - a;
+      float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+      return length(pa - ba * h) - r;
+    }
+
+    float smin(float a, float b, float k) {
+      float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+      return mix(b, a, h) - k * h * (1.0 - h);
+    }
+
+    void main() {
+      if (u_count <= 0) {
+        discard;
+      }
+
+      vec2 p = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
+      float d = 100000.0;
+
+      for (int i = 0; i < MAX_FUSION_SEGMENTS; i++) {
+        if (i >= u_count) {
+          break;
+        }
+
+        vec4 segment = u_segments[i];
+        float radius = u_radius + u_scale[i] * ${fusionLayerConfig.activeScaleBoostPx.toFixed(1)};
+        float currentD = sdCapsule(p, segment.xy, segment.zw, radius);
+        if (i == 0) {
+          d = currentD;
+        } else {
+          d = smin(d, currentD, u_fusion);
+        }
+      }
+
+      float edgeBlur = mix(10.0, 0.75, u_hardness);
+      float alpha = smoothstep(edgeBlur, 0.0, d) * u_fusionAlpha;
+      gl_FragColor = vec4(u_fusionColor, alpha);
+    }
+  `;
+
+  try {
+    const program = createFusionShaderProgram(gl, vertexSource, fragmentSource);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+      gl.STATIC_DRAW
+    );
+
+    fusionLayerState.program = program;
+    fusionLayerState.buffer = buffer;
+    fusionLayerState.uniforms = {
+      resolution: gl.getUniformLocation(program, "u_resolution"),
+      count: gl.getUniformLocation(program, "u_count"),
+      segments: gl.getUniformLocation(program, "u_segments[0]"),
+      scale: gl.getUniformLocation(program, "u_scale[0]"),
+      fusionColor: gl.getUniformLocation(program, "u_fusionColor"),
+      fusionAlpha: gl.getUniformLocation(program, "u_fusionAlpha"),
+      radius: gl.getUniformLocation(program, "u_radius"),
+      fusion: gl.getUniformLocation(program, "u_fusion"),
+      hardness: gl.getUniformLocation(program, "u_hardness"),
+    };
+    fusionLayerState.isAvailable = true;
+  } catch (error) {
+    console.warn("Fusion layer unavailable", error);
+    fusionLayerState.isAvailable = false;
+  }
+
+  return fusionLayerState;
+}
+
+function renderFusionLayer(visibleTrailPath = [], trailPalette = null) {
+  const layer = ensureFusionLayer();
+  const canvas = layer.canvas;
+
+  if (!canvas) {
+    return null;
+  }
+
+  const { width, height } = getBoardPixelSize();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const pixelWidth = Math.max(1, Math.round(width * dpr));
+  const pixelHeight = Math.max(1, Math.round(height * dpr));
+
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  const gl = layer.gl;
+  if (!layer.isAvailable || !gl || !layer.program || !layer.uniforms || !layer.buffer) {
+    return canvas;
+  }
+
+  const visiblePath = visibleTrailPath.slice(-(fusionLayerConfig.maxSegments + 1));
+  const segments = new Float32Array(fusionLayerConfig.maxSegments * 4);
+  const scales = new Float32Array(fusionLayerConfig.maxSegments);
+  let segmentCount = 0;
+
+  for (let index = 1; index < visiblePath.length; index += 1) {
+    if (segmentCount >= fusionLayerConfig.maxSegments) {
+      break;
+    }
+
+    const fromCenter = getTileBoardCenter(visiblePath[index - 1]);
+    const toCenter = getTileBoardCenter(visiblePath[index]);
+
+    if (!fromCenter || !toCenter) {
+      continue;
+    }
+
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= 0) {
+      continue;
+    }
+
+    const inset = Math.min(fusionLayerConfig.connectorInsetPx, distance * 0.42);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const startX = (fromCenter.x + unitX * inset) * dpr;
+    const startY = (fromCenter.y + unitY * inset) * dpr;
+    const endX = (toCenter.x - unitX * inset) * dpr;
+    const endY = (toCenter.y - unitY * inset) * dpr;
+
+    segments[segmentCount * 4] = startX;
+    segments[segmentCount * 4 + 1] = startY;
+    segments[segmentCount * 4 + 2] = endX;
+    segments[segmentCount * 4 + 3] = endY;
+    segmentCount += 1;
+  }
+
+  if (segmentCount > 0) {
+    scales[segmentCount - 1] = 1;
+  }
+
+  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  const fusionColor = parseHexColorToRgb(
+    gameState.trailFail ? palette.ring : fusionLayerConfig.color,
+    [0.99, 0.98, 0.93]
+  );
+
+  gl.viewport(0, 0, pixelWidth, pixelHeight);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  if (segmentCount === 0) {
+    return canvas;
+  }
+
+  gl.useProgram(layer.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, layer.buffer);
+  const positionLocation = gl.getAttribLocation(layer.program, "a_position");
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.uniform2f(layer.uniforms.resolution, pixelWidth, pixelHeight);
+  gl.uniform1i(layer.uniforms.count, segmentCount);
+  gl.uniform4fv(layer.uniforms.segments, segments);
+  gl.uniform1fv(layer.uniforms.scale, scales);
+  gl.uniform3f(layer.uniforms.fusionColor, fusionColor[0], fusionColor[1], fusionColor[2]);
+  gl.uniform1f(layer.uniforms.fusionAlpha, fusionLayerConfig.alpha);
+  gl.uniform1f(layer.uniforms.radius, fusionLayerConfig.connectorRadiusPx * dpr);
+  gl.uniform1f(layer.uniforms.fusion, fusionLayerConfig.fusionPx * dpr);
+  gl.uniform1f(layer.uniforms.hardness, fusionLayerConfig.hardness);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  return canvas;
+}
+
 function computeBoardSize() {
   if (!dom?.board) {
     return;
@@ -2077,6 +2418,18 @@ function getTileVisualType(tileState) {
 
 function getTileAsset(tileState) {
   return tileAssetMap[getTileVisualType(tileState)] ?? tileAssetMap.hidden;
+}
+
+function getTileRingMaskAsset(tileState, fallbackAsset) {
+  if (tileState?.revealed && isSafeTileType(tileState.type)) {
+    return tileAssetMap.empty;
+  }
+
+  if (tileState?.revealed && tileState.type === "enemy") {
+    return tileAssetMap.enemy;
+  }
+
+  return fallbackAsset;
 }
 
 function getSafeTileOverlayMarkup(tileState) {
@@ -2282,6 +2635,124 @@ function getThreatEdgeDirections(tileState) {
     .filter(Boolean);
 }
 
+function getPathConnectorKey(leftTileId, rightTileId) {
+  return [leftTileId, rightTileId].sort().join("::");
+}
+
+function markFreshPathConnector(leftTileId, rightTileId) {
+  const connectorKey = getPathConnectorKey(leftTileId, rightTileId);
+  const startedAt = getNow();
+
+  gameState.pathConnectorAnimationStarts = {
+    ...gameState.pathConnectorAnimationStarts,
+    [connectorKey]: startedAt,
+  };
+
+  scheduleFeedback(() => {
+    if (gameState.pathConnectorAnimationStarts[connectorKey] !== startedAt) {
+      return;
+    }
+
+    const nextAnimationStarts = { ...gameState.pathConnectorAnimationStarts };
+    delete nextAnimationStarts[connectorKey];
+    gameState.pathConnectorAnimationStarts = nextAnimationStarts;
+    triggerRenderOnly();
+  }, 420);
+
+  return connectorKey;
+}
+
+function markFreshPathEnd(tileId) {
+  const startedAt = getNow();
+
+  gameState.pathEndAnimationStarts = {
+    ...gameState.pathEndAnimationStarts,
+    [tileId]: startedAt,
+  };
+
+  scheduleFeedback(() => {
+    if (gameState.pathEndAnimationStarts[tileId] !== startedAt) {
+      return;
+    }
+
+    const nextAnimationStarts = { ...gameState.pathEndAnimationStarts };
+    delete nextAnimationStarts[tileId];
+    gameState.pathEndAnimationStarts = nextAnimationStarts;
+    triggerRenderOnly();
+  }, 260);
+}
+
+function createBoardPathConnectorLayer(visibleTrailPath = [], trailPalette = null) {
+  const layer = document.createElement("span");
+  layer.className = [
+    "board__path-connectors",
+    gameState.trailFading && gameState.currentPath.length === 0 ? "board__path-connectors--fading" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  layer.setAttribute("aria-hidden", "true");
+
+  if (visibleTrailPath.length < 2) {
+    return layer;
+  }
+
+  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  layer.style.setProperty("--path-connector-color", palette.ring);
+
+  for (let index = 1; index < visibleTrailPath.length; index += 1) {
+    const fromTileId = visibleTrailPath[index - 1];
+    const toTileId = visibleTrailPath[index];
+    const fromCenter = getTileBoardCenter(fromTileId);
+    const toCenter = getTileBoardCenter(toTileId);
+
+    if (!fromCenter || !toCenter) {
+      continue;
+    }
+
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= 0) {
+      continue;
+    }
+
+    const connectorInset = 40;
+    const connectorLength = Math.max(28, distance - connectorInset * 2);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const startX = fromCenter.x + unitX * connectorInset;
+    const startY = fromCenter.y + unitY * connectorInset;
+    const connectorKey = getPathConnectorKey(fromTileId, toTileId);
+    const isFresh = typeof gameState.pathConnectorAnimationStarts[connectorKey] === "number";
+    const freshElapsedMs = isFresh
+      ? Math.max(0, getNow() - gameState.pathConnectorAnimationStarts[connectorKey])
+      : 0;
+    const freshDelayMs = isFresh ? -Math.min(freshElapsedMs, 420) : 0;
+
+    const connector = document.createElement("span");
+    const isActive = index === visibleTrailPath.length - 1;
+    connector.className = [
+      "path-connector",
+      isFresh ? "path-connector--fresh" : "",
+      isActive ? "path-connector--active" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    connector.style.left = `${startX}px`;
+    connector.style.top = `${startY}px`;
+    connector.style.width = `${connectorLength}px`;
+    connector.style.setProperty("--path-connector-angle", `${Math.atan2(dy, dx)}rad`);
+    if (isFresh) {
+      connector.style.setProperty("--path-connector-grow-delay", `${freshDelayMs.toFixed(0)}ms`);
+    }
+    connector.innerHTML = `<span class="path-connector__fill"></span>`;
+    layer.appendChild(connector);
+  }
+
+  return layer;
+}
+
 function getCurrentTileId() {
   if (gameState.currentPath.length === 0) {
     return gameState.currentStartTileId;
@@ -2452,12 +2923,16 @@ function renderHud() {
   }
 }
 
-function createTileElement(tile, appearanceFrameMap = {}) {
+function createTileElement(tile, appearanceFrameMap = {}, visibleTrailPath = [], trailPalette = null) {
   const state = gameState.tileStateMap[tile.id];
   const isRevealed = state.revealed;
   const displayStartTileId = getDisplayStartTileId();
   const isStart = tile.id === displayStartTileId;
-  const isInPath = gameState.currentPath.includes(tile.id);
+  const pathIndex = visibleTrailPath.indexOf(tile.id);
+  const isInPath = pathIndex !== -1;
+  const isPathEnd = isInPath && pathIndex === visibleTrailPath.length - 1;
+  const isPathFading = isInPath && gameState.trailFading && gameState.currentPath.length === 0;
+  const isPathEndFresh = isPathEnd && typeof gameState.pathEndAnimationStarts[tile.id] === "number";
   const isEnemy = isRevealed && state.type === "enemy";
   const isShaking = gameState.shakeTileIds.includes(tile.id);
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
@@ -2484,6 +2959,9 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     isStartPulse ? "tile--start-pulse" : "",
     isInvalidFlashing ? "tile--invalid-flash" : "",
     isInPath ? "tile--path" : "",
+    isPathEnd ? "tile--path-end" : "",
+    isPathEndFresh ? "tile--path-end-fresh" : "",
+    isPathFading ? "tile--path-fading" : "",
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
     isFlipping ? "tile--flipping" : "",
@@ -2511,6 +2989,11 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     button.style.setProperty("--tile-appear-easing", tileAppearConfig.easing);
   }
   button.style.setProperty("--tile-image", `url("${tileAsset}")`);
+  button.style.setProperty("--tile-ring-mask-image", `url("${getTileRingMaskAsset(state, tileAsset)}")`);
+  if (isInPath) {
+    const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+    button.style.setProperty("--tile-path-ring-color", palette.ring);
+  }
   if (isScoreBouncing) {
     // 用 negative animation-delay 让动画从已播放的进度继续，避免 renderBoard 重建 DOM 时跳跃从 0 重新开始
     const startedAt = gameState.scoreBounceStartedAt[tile.id];
@@ -2520,6 +3003,10 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     } else {
       button.style.setProperty("--bounce-delay", "0ms");
     }
+  }
+  if (isPathEndFresh) {
+    const elapsed = Math.max(0, getNow() - gameState.pathEndAnimationStarts[tile.id]);
+    button.style.setProperty("--path-end-ring-delay", `${-Math.min(elapsed, 260)}ms`);
   }
   button.dataset.tileId = tile.id;
   button.dataset.row = String(tile.row);
@@ -2574,112 +3061,39 @@ function renderBoard() {
   }
 
   const visibleTileIds = getVisibleTileIds();
+  const visibleTrailPath = getVisibleTrailPath();
+  const trailPalette = getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
   const appearanceFrameMap = buildTileAppearanceFrameMap(visibleTileIds);
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
   dom.board.innerHTML = "";
 
   const fragment = document.createDocumentFragment();
+  const fusionCanvas = renderFusionLayer(visibleTrailPath, trailPalette);
+  if (fusionCanvas) {
+    fragment.appendChild(fusionCanvas);
+  }
 
   tiles.forEach((tile) => {
     if (!visibleTileIds.has(tile.id)) {
       return;
     }
 
-    fragment.appendChild(createTileElement(tile, appearanceFrameMap));
+    fragment.appendChild(createTileElement(tile, appearanceFrameMap, visibleTrailPath, trailPalette));
   });
 
   dom.board.appendChild(fragment);
   renderBoardTrail();
 }
 
-const trailSvgNs = "http://www.w3.org/2000/svg";
-
-function getTileCenter(tileId) {
-  return getTileBoardCenter(tileId);
-}
-
 function renderBoardTrail() {
   if (!dom?.board) return;
 
-  const sourcePath =
-    gameState.currentPath && gameState.currentPath.length > 0
-      ? gameState.currentPath
-      : gameState.trailPath || [];
-
-  let svg = dom.board.querySelector(":scope > svg.board__trail");
-
-  if (!sourcePath || sourcePath.length === 0) {
-    if (svg) svg.remove();
-    return;
+  // 主视觉已迁移到 tile ring + connector；这里清理迁移期残留 trail。
+  const svg = dom.board.querySelector(":scope > svg.board__trail");
+  if (svg) {
+    svg.remove();
   }
-
-  const points = sourcePath
-    .map((id) => getTileCenter(id))
-    .filter((p) => p);
-
-  if (points.length === 0) {
-    if (svg) svg.remove();
-    return;
-  }
-
-  const boardWidth = parseFloat(dom.board.style.width) || dom.board.clientWidth;
-  const boardHeight = parseFloat(dom.board.style.height) || dom.board.clientHeight;
-
-  if (!svg) {
-    svg = document.createElementNS(trailSvgNs, "svg");
-    svg.classList.add("board__trail");
-    svg.setAttribute("aria-hidden", "true");
-    const glow = document.createElementNS(trailSvgNs, "path");
-    glow.setAttribute("class", "board__trail-glow");
-    const stroke = document.createElementNS(trailSvgNs, "path");
-    stroke.setAttribute("class", "board__trail-stroke");
-    const flow = document.createElementNS(trailSvgNs, "path");
-    flow.setAttribute("class", "board__trail-flow");
-    const head = document.createElementNS(trailSvgNs, "circle");
-    head.setAttribute("class", "board__trail-head");
-    head.setAttribute("r", "10");
-    svg.appendChild(glow);
-    svg.appendChild(stroke);
-    svg.appendChild(flow);
-    svg.appendChild(head);
-    // 插入到棋盘最前面，确保 tile 覆盖在轨迹之上
-    dom.board.insertBefore(svg, dom.board.firstChild);
-  }
-
-  svg.setAttribute("width", String(boardWidth));
-  svg.setAttribute("height", String(boardHeight));
-  svg.setAttribute("viewBox", `0 0 ${boardWidth} ${boardHeight}`);
-
-  svg.classList.toggle("board__trail--fading", !!gameState.trailFading);
-  svg.classList.toggle("board__trail--fail", !!gameState.trailFail);
-  svg.classList.toggle("board__trail--single", points.length < 2);
-
-  const d =
-    points.length >= 2
-      ? points
-          .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-          .join(" ")
-      : "";
-
-  const glow = svg.querySelector(".board__trail-glow");
-  const stroke = svg.querySelector(".board__trail-stroke");
-  const flow = svg.querySelector(".board__trail-flow");
-  const head = svg.querySelector(".board__trail-head");
-
-  if (d) {
-    glow.setAttribute("d", d);
-    stroke.setAttribute("d", d);
-    flow.setAttribute("d", d);
-  } else {
-    glow.removeAttribute("d");
-    stroke.removeAttribute("d");
-    flow.removeAttribute("d");
-  }
-
-  const headPoint = points[points.length - 1];
-  head.setAttribute("cx", String(headPoint.x));
-  head.setAttribute("cy", String(headPoint.y));
 }
 
 function renderAll() {
@@ -2826,6 +3240,9 @@ function beginRun(tileId, pointerId = null) {
   gameState.trailPath = [tileId];
   gameState.trailFading = false;
   gameState.trailFail = false;
+  gameState.pathConnectorAnimationStarts = {};
+  gameState.pathEndAnimationStarts = {};
+  markFreshPathEnd(tileId);
   gameState.currentRunVisitedTileIds = new Set([tileId]);
   gameState.currentRunHarvestedTileIds = new Set();
   gameState.lastSafeTileId = tileId;
@@ -3319,14 +3736,22 @@ function extendRun(tileId) {
   const wasRevealed = tileState.revealed;
   // 本轮“首访”判定：在写入 currentRunVisitedTileIds 之前抓，用来闸住体力扣减
   const isFirstVisitThisRun = !gameState.currentRunVisitedTileIds.has(tileId);
+  const previousTileId = gameState.currentPath[gameState.currentPath.length - 1];
   gameState.currentPath.push(tileId);
   gameState.trailPath = [...gameState.currentPath];
+  if (previousTileId) {
+    markFreshPathConnector(previousTileId, tileId);
+  }
+  markFreshPathEnd(tileId);
   gameState.currentRunVisitedTileIds.add(tileId);
 
   if (tileState.type === "enemy") {
     setTileRevealed(tileId);
     playTileEnemyHitSound();
     gameState.hasHitEnemy = true;
+    gameState.trailPath = [...gameState.currentPath];
+    gameState.trailFail = true;
+    gameState.trailFading = false;
     gameState.statusText = `踩到天敌 ${tileId}，本轮花蜜清零。`;
     logEvent("踩到天敌", {
       tileId,
