@@ -356,15 +356,18 @@ const boardMetrics = {
   yUnit: 110,
 };
 const boardDisplayScale = 1.7;
-const fusionLayerConfig = {
-  maxSegments: 32,
-  connectorInsetPx: 38,
-  connectorRadiusPx: 19,
-  fusionPx: 12,
-  hardness: 0.92,
-  activeScaleBoostPx: 4,
-  alpha: 1,
+const pathFusionConfig = {
+  filterId: "path-fusion-gooey",
+  blurStdDeviation: 7,
+  alphaMultiplier: 18,
+  alphaOffset: -7,
+  ringWidthPx: 116,
+  ringHeightPx: 128,
+  activeRingScale: 1.08,
+  connectorWidthPx: 34,
+  connectorInsetPx: 40,
   color: "#fffdf5",
+  failColor: "#ffbeb7",
 };
 
 const hasDom = typeof document !== "undefined";
@@ -982,7 +985,15 @@ function showToast(message, tone = "") {
   }, animationDurations.toast);
 }
 
-function triggerStartPulse(tileId) {
+function triggerStartPulse(tileId, options = {}) {
+  // mode === "begin"：起手反馈交给 tile--path-end 的放大承担，不再叠 ring pulse + inner bounce
+  // mode === "settle"（默认）：结算成功反馈仍保留原有 tile--start-pulse 动画
+  const { mode = "settle" } = options;
+
+  if (mode === "begin") {
+    return;
+  }
+
   gameState.startPulseTileId = tileId;
 
   scheduleFeedback(() => {
@@ -1348,6 +1359,12 @@ function resetCollectionFeedback(options = {}) {
 
   if (clearFlights) {
     clearActiveFlowerFlights();
+    // 清掉可能残留的结算巡飞蜜蜂（例如玩家在结算未完成时触发了下一轮 / 重置）
+    if (dom?.fxOverlay) {
+      dom.fxOverlay.querySelectorAll(".settlement-bee").forEach((el) => el.remove());
+    }
+    // 同步恢复 HUD 蜜蜂可见，避免因中断导致 HUD 蜜蜂一直隐藏
+    dom?.beeCounterIcon?.classList.remove("bee-counter__icon--away");
   }
 
   if (dom?.goalCard) {
@@ -2073,283 +2090,6 @@ function getTrailVisualPalette(pathLength, isFail = false) {
   };
 }
 
-const fusionLayerState = {
-  canvas: null,
-  gl: null,
-  program: null,
-  buffer: null,
-  uniforms: null,
-  isAvailable: false,
-};
-
-function parseHexColorToRgb(hexColor, fallback = [1, 1, 1]) {
-  if (typeof hexColor !== "string") {
-    return fallback;
-  }
-
-  const normalized = hexColor.trim().replace(/^#/, "");
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return fallback;
-  }
-
-  return [0, 2, 4].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16) / 255);
-}
-
-function createFusionShaderProgram(gl, vertexSource, fragmentSource) {
-  const compileShader = (type, source) => {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const info = gl.getShaderInfoLog(shader);
-      gl.deleteShader(shader);
-      throw new Error(info || "Failed to compile fusion shader");
-    }
-
-    return shader;
-  };
-
-  const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
-  const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
-  const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-  gl.deleteShader(vertexShader);
-  gl.deleteShader(fragmentShader);
-
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    const info = gl.getProgramInfoLog(program);
-    gl.deleteProgram(program);
-    throw new Error(info || "Failed to link fusion shader");
-  }
-
-  return program;
-}
-
-function ensureFusionLayer() {
-  if (!hasDom || fusionLayerState.canvas) {
-    return fusionLayerState;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.className = "board__fusion-canvas";
-  canvas.setAttribute("aria-hidden", "true");
-
-  const gl = canvas.getContext("webgl", {
-    alpha: true,
-    antialias: true,
-    depth: false,
-    stencil: false,
-    premultipliedAlpha: true,
-  });
-
-  fusionLayerState.canvas = canvas;
-  fusionLayerState.gl = gl;
-
-  if (!gl) {
-    return fusionLayerState;
-  }
-
-  const vertexSource = `
-    attribute vec2 a_position;
-    void main() {
-      gl_Position = vec4(a_position, 0.0, 1.0);
-    }
-  `;
-  const fragmentSource = `
-    precision mediump float;
-
-    const int MAX_FUSION_SEGMENTS = ${fusionLayerConfig.maxSegments};
-    uniform vec2 u_resolution;
-    uniform int u_count;
-    uniform vec4 u_segments[MAX_FUSION_SEGMENTS];
-    uniform float u_scale[MAX_FUSION_SEGMENTS];
-    uniform vec3 u_fusionColor;
-    uniform float u_fusionAlpha;
-    uniform float u_radius;
-    uniform float u_fusion;
-    uniform float u_hardness;
-
-    float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
-      vec2 pa = p - a;
-      vec2 ba = b - a;
-      float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-      return length(pa - ba * h) - r;
-    }
-
-    float smin(float a, float b, float k) {
-      float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-      return mix(b, a, h) - k * h * (1.0 - h);
-    }
-
-    void main() {
-      if (u_count <= 0) {
-        discard;
-      }
-
-      vec2 p = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
-      float d = 100000.0;
-
-      for (int i = 0; i < MAX_FUSION_SEGMENTS; i++) {
-        if (i >= u_count) {
-          break;
-        }
-
-        vec4 segment = u_segments[i];
-        float radius = u_radius + u_scale[i] * ${fusionLayerConfig.activeScaleBoostPx.toFixed(1)};
-        float currentD = sdCapsule(p, segment.xy, segment.zw, radius);
-        if (i == 0) {
-          d = currentD;
-        } else {
-          d = smin(d, currentD, u_fusion);
-        }
-      }
-
-      float edgeBlur = mix(10.0, 0.75, u_hardness);
-      float alpha = smoothstep(edgeBlur, 0.0, d) * u_fusionAlpha;
-      gl_FragColor = vec4(u_fusionColor, alpha);
-    }
-  `;
-
-  try {
-    const program = createFusionShaderProgram(gl, vertexSource, fragmentSource);
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-      gl.STATIC_DRAW
-    );
-
-    fusionLayerState.program = program;
-    fusionLayerState.buffer = buffer;
-    fusionLayerState.uniforms = {
-      resolution: gl.getUniformLocation(program, "u_resolution"),
-      count: gl.getUniformLocation(program, "u_count"),
-      segments: gl.getUniformLocation(program, "u_segments[0]"),
-      scale: gl.getUniformLocation(program, "u_scale[0]"),
-      fusionColor: gl.getUniformLocation(program, "u_fusionColor"),
-      fusionAlpha: gl.getUniformLocation(program, "u_fusionAlpha"),
-      radius: gl.getUniformLocation(program, "u_radius"),
-      fusion: gl.getUniformLocation(program, "u_fusion"),
-      hardness: gl.getUniformLocation(program, "u_hardness"),
-    };
-    fusionLayerState.isAvailable = true;
-  } catch (error) {
-    console.warn("Fusion layer unavailable", error);
-    fusionLayerState.isAvailable = false;
-  }
-
-  return fusionLayerState;
-}
-
-function renderFusionLayer(visibleTrailPath = [], trailPalette = null) {
-  const layer = ensureFusionLayer();
-  const canvas = layer.canvas;
-
-  if (!canvas) {
-    return null;
-  }
-
-  const { width, height } = getBoardPixelSize();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const pixelWidth = Math.max(1, Math.round(width * dpr));
-  const pixelHeight = Math.max(1, Math.round(height * dpr));
-
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-    canvas.width = pixelWidth;
-    canvas.height = pixelHeight;
-  }
-
-  const gl = layer.gl;
-  if (!layer.isAvailable || !gl || !layer.program || !layer.uniforms || !layer.buffer) {
-    return canvas;
-  }
-
-  const visiblePath = visibleTrailPath.slice(-(fusionLayerConfig.maxSegments + 1));
-  const segments = new Float32Array(fusionLayerConfig.maxSegments * 4);
-  const scales = new Float32Array(fusionLayerConfig.maxSegments);
-  let segmentCount = 0;
-
-  for (let index = 1; index < visiblePath.length; index += 1) {
-    if (segmentCount >= fusionLayerConfig.maxSegments) {
-      break;
-    }
-
-    const fromCenter = getTileBoardCenter(visiblePath[index - 1]);
-    const toCenter = getTileBoardCenter(visiblePath[index]);
-
-    if (!fromCenter || !toCenter) {
-      continue;
-    }
-
-    const dx = toCenter.x - fromCenter.x;
-    const dy = toCenter.y - fromCenter.y;
-    const distance = Math.hypot(dx, dy);
-
-    if (distance <= 0) {
-      continue;
-    }
-
-    const inset = Math.min(fusionLayerConfig.connectorInsetPx, distance * 0.42);
-    const unitX = dx / distance;
-    const unitY = dy / distance;
-    const startX = (fromCenter.x + unitX * inset) * dpr;
-    const startY = (fromCenter.y + unitY * inset) * dpr;
-    const endX = (toCenter.x - unitX * inset) * dpr;
-    const endY = (toCenter.y - unitY * inset) * dpr;
-
-    segments[segmentCount * 4] = startX;
-    segments[segmentCount * 4 + 1] = startY;
-    segments[segmentCount * 4 + 2] = endX;
-    segments[segmentCount * 4 + 3] = endY;
-    segmentCount += 1;
-  }
-
-  if (segmentCount > 0) {
-    scales[segmentCount - 1] = 1;
-  }
-
-  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
-  const fusionColor = parseHexColorToRgb(
-    gameState.trailFail ? palette.ring : fusionLayerConfig.color,
-    [0.99, 0.98, 0.93]
-  );
-
-  gl.viewport(0, 0, pixelWidth, pixelHeight);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  if (segmentCount === 0) {
-    return canvas;
-  }
-
-  gl.useProgram(layer.program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, layer.buffer);
-  const positionLocation = gl.getAttribLocation(layer.program, "a_position");
-  gl.enableVertexAttribArray(positionLocation);
-  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-  gl.uniform2f(layer.uniforms.resolution, pixelWidth, pixelHeight);
-  gl.uniform1i(layer.uniforms.count, segmentCount);
-  gl.uniform4fv(layer.uniforms.segments, segments);
-  gl.uniform1fv(layer.uniforms.scale, scales);
-  gl.uniform3f(layer.uniforms.fusionColor, fusionColor[0], fusionColor[1], fusionColor[2]);
-  gl.uniform1f(layer.uniforms.fusionAlpha, fusionLayerConfig.alpha);
-  gl.uniform1f(layer.uniforms.radius, fusionLayerConfig.connectorRadiusPx * dpr);
-  gl.uniform1f(layer.uniforms.fusion, fusionLayerConfig.fusionPx * dpr);
-  gl.uniform1f(layer.uniforms.hardness, fusionLayerConfig.hardness);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-  return canvas;
-}
-
 function computeBoardSize() {
   if (!dom?.board) {
     return;
@@ -2682,6 +2422,107 @@ function markFreshPathEnd(tileId) {
   }, 260);
 }
 
+function createPathFusionFilterMarkup() {
+  const matrixValues = [
+    "1 0 0 0 0",
+    "0 1 0 0 0",
+    "0 0 1 0 0",
+    `0 0 0 ${pathFusionConfig.alphaMultiplier} ${pathFusionConfig.alphaOffset}`,
+  ].join(" ");
+
+  return `
+    <svg class="board__path-fusion-filter-svg" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="${pathFusionConfig.filterId}" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="${pathFusionConfig.blurStdDeviation}" result="blur" />
+          <feColorMatrix in="blur" mode="matrix" values="${matrixValues}" result="goo" />
+        </filter>
+      </defs>
+    </svg>
+  `;
+}
+
+function createBoardPathFusionLayer(visibleTrailPath = [], trailPalette = null) {
+  const layer = document.createElement("span");
+  layer.className = [
+    "board__path-fusion",
+    gameState.trailFading && gameState.currentPath.length === 0 ? "board__path-fusion--fading" : "",
+    gameState.trailFail ? "board__path-fusion--fail" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  layer.setAttribute("aria-hidden", "true");
+
+  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  const fusionColor = gameState.trailFail ? pathFusionConfig.failColor : pathFusionConfig.color;
+  layer.style.setProperty("--path-fusion-color", fusionColor || palette.ring);
+  layer.style.setProperty("--path-fusion-ring-width", `${pathFusionConfig.ringWidthPx}px`);
+  layer.style.setProperty("--path-fusion-ring-height", `${pathFusionConfig.ringHeightPx}px`);
+  layer.style.setProperty("--path-fusion-connector-width", `${pathFusionConfig.connectorWidthPx}px`);
+  layer.style.setProperty("--path-fusion-active-scale", String(pathFusionConfig.activeRingScale));
+
+  const shapes = document.createElement("span");
+  shapes.className = "board__path-fusion-shapes";
+
+  visibleTrailPath.forEach((tileId, index) => {
+    const center = getTileBoardCenter(tileId);
+    if (!center) {
+      return;
+    }
+
+    const ring = document.createElement("span");
+    ring.className = [
+      "path-fusion-ring",
+      index === visibleTrailPath.length - 1 ? "path-fusion-ring--active" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    ring.style.left = `${center.x}px`;
+    ring.style.top = `${center.y}px`;
+    shapes.appendChild(ring);
+  });
+
+  for (let index = 1; index < visibleTrailPath.length; index += 1) {
+    const fromCenter = getTileBoardCenter(visibleTrailPath[index - 1]);
+    const toCenter = getTileBoardCenter(visibleTrailPath[index]);
+
+    if (!fromCenter || !toCenter) {
+      continue;
+    }
+
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= 0) {
+      continue;
+    }
+
+    const inset = Math.min(pathFusionConfig.connectorInsetPx, distance * 0.42);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const startX = fromCenter.x + unitX * inset;
+    const startY = fromCenter.y + unitY * inset;
+    const connectorLength = Math.max(0, distance - inset * 2);
+
+    if (connectorLength <= 0) {
+      continue;
+    }
+
+    const connector = document.createElement("span");
+    connector.className = "path-fusion-connector";
+    connector.style.left = `${startX}px`;
+    connector.style.top = `${startY}px`;
+    connector.style.width = `${connectorLength}px`;
+    connector.style.setProperty("--path-fusion-connector-angle", `${Math.atan2(dy, dx)}rad`);
+    shapes.appendChild(connector);
+  }
+
+  layer.innerHTML = createPathFusionFilterMarkup();
+  layer.appendChild(shapes);
+  return layer;
+}
+
 function createBoardPathConnectorLayer(visibleTrailPath = [], trailPalette = null) {
   const layer = document.createElement("span");
   layer.className = [
@@ -2880,6 +2721,13 @@ function renderHud() {
     // 强制重排以重启动画
     void icon.offsetWidth;
     icon.classList.add("bee-counter__icon--jump");
+    // jump 是一次性动画，播完移除 class 以让待机 idle 动画接管
+    const handleJumpEnd = (event) => {
+      if (event.animationName !== "bee-counter-jump") return;
+      icon.classList.remove("bee-counter__icon--jump");
+      icon.removeEventListener("animationend", handleJumpEnd);
+    };
+    icon.addEventListener("animationend", handleJumpEnd);
   }
 
 
@@ -2923,7 +2771,13 @@ function renderHud() {
   }
 }
 
-function createTileElement(tile, appearanceFrameMap = {}, visibleTrailPath = [], trailPalette = null) {
+function createTileElement(
+  tile,
+  appearanceFrameMap = {},
+  visibleTrailPath = [],
+  trailPalette = null,
+  pathDangerActive = false
+) {
   const state = gameState.tileStateMap[tile.id];
   const isRevealed = state.revealed;
   const displayStartTileId = getDisplayStartTileId();
@@ -2933,6 +2787,21 @@ function createTileElement(tile, appearanceFrameMap = {}, visibleTrailPath = [],
   const isPathEnd = isInPath && pathIndex === visibleTrailPath.length - 1;
   const isPathFading = isInPath && gameState.trailFading && gameState.currentPath.length === 0;
   const isPathEndFresh = isPathEnd && typeof gameState.pathEndAnimationStarts[tile.id] === "number";
+  // 当前所在格的 dangerCount > 0（即周围有鸡）时，所有路径格持续抖动
+  const isDangerAlert = isInPath && pathDangerActive;
+  // 拖拽中 + 路径中 + 可采集植物：植物图层做循环呼吸（仅 isDragging 期间，松手后立即移除）
+  const isHarvestableActive =
+    gameState.isDragging &&
+    isInPath &&
+    isRevealed &&
+    (state.type === "flower" || state.type === "apple_tree" || state.type === "tulip");
+  // 用一个全局时间锚点（now % 周期）算出 negative animation-delay，
+  // 避免每次 renderBoard 重建 DOM 时呼吸动画从 0% 重新开始造成的卡顿/跳变。
+  // 周期需与 CSS @keyframes tile-harvestable-breathe 的 animation-duration 一致。
+  const harvestableBreathePeriodMs = 2200;
+  const harvestableBreatheDelayMs = isHarvestableActive
+    ? -(getNow() % harvestableBreathePeriodMs)
+    : 0;
   const isEnemy = isRevealed && state.type === "enemy";
   const isShaking = gameState.shakeTileIds.includes(tile.id);
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
@@ -2962,6 +2831,8 @@ function createTileElement(tile, appearanceFrameMap = {}, visibleTrailPath = [],
     isPathEnd ? "tile--path-end" : "",
     isPathEndFresh ? "tile--path-end-fresh" : "",
     isPathFading ? "tile--path-fading" : "",
+    isDangerAlert ? "tile--danger-alert" : "",
+    isHarvestableActive ? "tile--harvestable-active" : "",
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
     isFlipping ? "tile--flipping" : "",
@@ -3007,6 +2878,21 @@ function createTileElement(tile, appearanceFrameMap = {}, visibleTrailPath = [],
   if (isPathEndFresh) {
     const elapsed = Math.max(0, getNow() - gameState.pathEndAnimationStarts[tile.id]);
     button.style.setProperty("--path-end-ring-delay", `${-Math.min(elapsed, 260)}ms`);
+  }
+  if (isHarvestableActive) {
+    // 让 renderBoard 重建 DOM 后呼吸动画从“当前应处于的进度”继续，而不是从头播
+    button.style.setProperty("--harvestable-breathe-delay", `${harvestableBreatheDelayMs}ms`);
+  }
+  if (isDangerAlert) {
+    // 给每个路径格一个稳定但错开的负 delay，让所有抖动节奏不同步。
+    // 使用 tile.id 的哈希保证位置一致，并按 pathIndex 拉开距离。
+    const indexOffset = pathIndex * 73;
+    let hash = 0;
+    for (let i = 0; i < tile.id.length; i += 1) {
+      hash = (hash * 31 + tile.id.charCodeAt(i)) | 0;
+    }
+    const delayMs = -(Math.abs(hash + indexOffset) % 360);
+    button.style.setProperty("--danger-alert-delay", `${delayMs}ms`);
   }
   button.dataset.tileId = tile.id;
   button.dataset.row = String(tile.row);
@@ -3063,23 +2949,34 @@ function renderBoard() {
   const visibleTileIds = getVisibleTileIds();
   const visibleTrailPath = getVisibleTrailPath();
   const trailPalette = getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  // 当前所在格周围有鸡（dangerCount > 0）时，所有路径格持续抖动。
+  // 仅在玩家拖拽中生效，松手/淡出/失败后立即取消。
+  const pathEndTileId = visibleTrailPath[visibleTrailPath.length - 1];
+  const pathEndState = pathEndTileId ? gameState.tileStateMap[pathEndTileId] : null;
+  const pathDangerActive =
+    gameState.isDragging &&
+    !gameState.trailFading &&
+    !gameState.trailFail &&
+    !!pathEndState &&
+    pathEndState.revealed &&
+    pathEndState.type !== "enemy" &&
+    (pathEndState.dangerCount || 0) > 0;
   const appearanceFrameMap = buildTileAppearanceFrameMap(visibleTileIds);
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
   dom.board.innerHTML = "";
 
   const fragment = document.createDocumentFragment();
-  const fusionCanvas = renderFusionLayer(visibleTrailPath, trailPalette);
-  if (fusionCanvas) {
-    fragment.appendChild(fusionCanvas);
-  }
+  fragment.appendChild(createBoardPathFusionLayer(visibleTrailPath, trailPalette));
 
   tiles.forEach((tile) => {
     if (!visibleTileIds.has(tile.id)) {
       return;
     }
 
-    fragment.appendChild(createTileElement(tile, appearanceFrameMap, visibleTrailPath, trailPalette));
+    fragment.appendChild(
+      createTileElement(tile, appearanceFrameMap, visibleTrailPath, trailPalette, pathDangerActive)
+    );
   });
 
   dom.board.appendChild(fragment);
@@ -3242,7 +3139,6 @@ function beginRun(tileId, pointerId = null) {
   gameState.trailFail = false;
   gameState.pathConnectorAnimationStarts = {};
   gameState.pathEndAnimationStarts = {};
-  markFreshPathEnd(tileId);
   gameState.currentRunVisitedTileIds = new Set([tileId]);
   gameState.currentRunHarvestedTileIds = new Set();
   gameState.lastSafeTileId = tileId;
@@ -3257,7 +3153,9 @@ function beginRun(tileId, pointerId = null) {
   // 起点格也算被采集：把它压入 pendingScoreList（与 extendRun 共用同一份逻辑）
   enqueueTileCollection(tileId);
   playStartSelectSound();
-  triggerStartPulse(tileId);
+  // 起手反馈走极简版：清掉残留的 start-pulse，避免和 tile--path-end 的放大叠加
+  gameState.startPulseTileId = null;
+  triggerStartPulse(tileId, { mode: "begin" });
   gameState.statusText = "采集中：滑入相邻格，松手后结算。";
   logEvent("新一轮开始", {
     currentStartTileId: tileId,
@@ -3345,6 +3243,129 @@ function waitForAllFlightsToLand(callback) {
   }
 
   check();
+}
+
+// 结算阶段蜜蜂巡飞动画：从 HUD 蜜蜂计数器出发，沿本轮路径依次飞过每一格，
+// 顺势飞出屏幕；等结算完毕再从屏幕下方飞回 HUD 位置，HUD 蜜蜂回归并继续待机。
+// 节奏与 playRunSettlementSequence 的 tick 完全一致：每段时长 = settlementSequenceConfig.staggerMs，
+// 共用 scheduleCollectionTask 调度通道，避免节奏漂移。
+// 返回 { onSettlementComplete } 回调，由 settlement onComplete 触发回归段。
+function playSettlementBeeFlight(pathTileIds) {
+  const noop = { onSettlementComplete: () => {} };
+  if (!hasDom || !dom?.fxOverlay || !dom?.beeCounterIcon) return noop;
+  if (!Array.isArray(pathTileIds) || pathTileIds.length === 0) return noop;
+
+  const beeStartRect = dom.beeCounterIcon.getBoundingClientRect();
+  const startPoint = getOverlayRelativePointFromRect(beeStartRect, 0.5);
+  if (!startPoint) return noop;
+
+  // 依次拿到每个 path tile 的中心点（fx-overlay 局部坐标）
+  const waypoints = pathTileIds
+    .map((tileId) => {
+      const tileElement = dom?.board?.querySelector(`[data-tile-id="${tileId}"]`);
+      if (!tileElement) return null;
+      return getOverlayRelativePointFromRect(tileElement.getBoundingClientRect(), 0.5);
+    })
+    .filter(Boolean);
+
+  if (waypoints.length === 0) return noop;
+
+  // 蜜蜂尺寸与 HUD 蜜蜂保持一致：直接用 HUD 蜜蜂的真实渲染尺寸
+  const beeWidth = Math.round(beeStartRect.width);
+  const beeHeight = Math.round(beeStartRect.height);
+
+  // 飞行期间隐藏 HUD 蜜蜂（避免“两只蜜蜂同时存在”），结算回归后再显示
+  dom.beeCounterIcon.classList.add("bee-counter__icon--away");
+
+  // 蜜蜂元素
+  const bee = document.createElement("img");
+  bee.className = "settlement-bee";
+  bee.src = customCursorAsset;
+  bee.alt = "";
+  bee.setAttribute("aria-hidden", "true");
+  bee.style.width = `${beeWidth}px`;
+  bee.style.height = `${beeHeight}px`;
+  // 起始位置 = HUD 蜜蜂中心
+  bee.style.transform = `translate3d(${startPoint.x - beeWidth / 2}px, ${
+    startPoint.y - beeHeight / 2
+  }px, 0)`;
+  dom.fxOverlay.appendChild(bee);
+
+  const stagger = settlementSequenceConfig.staggerMs;
+  bee.style.transition = `transform ${stagger}ms cubic-bezier(0.45, 0, 0.55, 1)`;
+
+  const moveTo = (point, ms = stagger) => {
+    bee.style.transition = `transform ${ms}ms cubic-bezier(0.45, 0, 0.55, 1)`;
+    bee.style.transform = `translate3d(${point.x - beeWidth / 2}px, ${
+      point.y - beeHeight / 2
+    }px, 0)`;
+  };
+
+  // 第一段：HUD 起点 → path[0]
+  requestAnimationFrame(() => {
+    moveTo(waypoints[0]);
+  });
+
+  for (let i = 1; i < waypoints.length; i += 1) {
+    scheduleCollectionTask(() => {
+      moveTo(waypoints[i]);
+    }, i * stagger);
+  }
+
+  // 最后一段方向 → 顺势飞出屏幕
+  const last = waypoints[waypoints.length - 1];
+  const prev =
+    waypoints.length >= 2 ? waypoints[waypoints.length - 2] : startPoint;
+  const dx = last.x - prev.x;
+  const dy = last.y - prev.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const exitDistance = 900;
+  const exitPoint = {
+    x: last.x + (dx / len) * exitDistance,
+    y: last.y + (dy / len) * exitDistance,
+  };
+
+  const exitMs = Math.max(420, stagger * 2);
+  scheduleCollectionTask(() => {
+    moveTo(exitPoint, exitMs);
+  }, waypoints.length * stagger);
+
+  // 等 settlement 完成后，从屏幕下方飞回 HUD 位置
+  let isReturned = false;
+  const triggerReturn = () => {
+    if (isReturned) return;
+    isReturned = true;
+    if (!bee.isConnected) {
+      // 元素已被清理（例如中途 reset），直接恢复 HUD 蜜蜂
+      dom.beeCounterIcon?.classList.remove("bee-counter__icon--away");
+      return;
+    }
+
+    const overlayRect = dom.fxOverlay.getBoundingClientRect();
+    // 从 HUD 正下方屏幕外飞回（视觉：蜜蜂忙完一圈，从下方归巢）
+    const belowPoint = {
+      x: startPoint.x,
+      y: overlayRect.height + beeHeight + 40,
+    };
+
+    // 先瞬移到屏幕下方
+    bee.style.transition = "none";
+    bee.style.transform = `translate3d(${belowPoint.x - beeWidth / 2}px, ${
+      belowPoint.y - beeHeight / 2
+    }px, 0)`;
+    // 下一帧再做飞回过渡
+    requestAnimationFrame(() => {
+      const returnMs = 620;
+      moveTo(startPoint, returnMs);
+      // 飞到位后：清掉飞行蜜蜂，HUD 蜜蜂恢复显示（自然继续 idle/orbit）
+      scheduleCollectionTask(() => {
+        bee.remove();
+        dom.beeCounterIcon?.classList.remove("bee-counter__icon--away");
+      }, returnMs + 30);
+    });
+  };
+
+  return { onSettlementComplete: triggerReturn };
 }
 
 function playRunSettlementSequence(list, onComplete) {
@@ -3618,6 +3639,9 @@ function completeRun(outcome) {
     return { ok: true, reason: outcome, path, nextStartTileId };
   }
 
+  // 蜜蜂巡飞：仅在“成功结算 + 消耗了蜜蜂”时触发，与 settlement 节奏同步开始
+  const beeFlight = consumedBee ? playSettlementBeeFlight(path) : null;
+
   // 有花蜜要入账：进入结算序列
   playRunSettlementSequence(pendingListSnapshot, () => {
     finalizeSuccessRun({
@@ -3628,6 +3652,8 @@ function completeRun(outcome) {
       pendingList: pendingListSnapshot,
     });
     scheduleTrailFadeOut(0);
+    // 结算完毕：蜜蜂从屏幕下方飞回 HUD 位置，HUD 蜜蜂恢复待机
+    beeFlight?.onSettlementComplete?.();
   });
 
   renderAll();

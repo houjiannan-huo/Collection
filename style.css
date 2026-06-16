@@ -363,13 +363,64 @@ body::before {
   filter: brightness(0.55) saturate(0.75);
 }
 
-.board__fusion-canvas {
+.board__path-fusion {
+  --path-fusion-color: #fffdf5;
+  --path-fusion-ring-width: 116px;
+  --path-fusion-ring-height: 128px;
+  --path-fusion-connector-width: 34px;
+  --path-fusion-active-scale: 1.08;
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
+  overflow: visible;
   z-index: 0;
+}
+
+.board__path-fusion--fading {
+  animation: tile-path-fade-out 260ms ease forwards;
+}
+
+.board__path-fusion-filter-svg {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.board__path-fusion-shapes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  filter: url(#path-fusion-gooey);
+}
+
+.path-fusion-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--path-fusion-ring-width);
+  height: var(--path-fusion-ring-height);
+  background-color: var(--path-fusion-color);
+  clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+  transform: translate(-50%, -50%) scale(1);
+  transform-origin: center;
+  transition: transform 160ms ease;
+}
+
+.path-fusion-ring--active {
+  transform: translate(-50%, -50%) scale(var(--path-fusion-active-scale));
+}
+
+.path-fusion-connector {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: var(--path-fusion-connector-width);
+  border-radius: 999px;
+  background-color: var(--path-fusion-color);
+  transform: translateY(-50%) rotate(var(--path-fusion-connector-angle));
+  transform-origin: left center;
 }
 
 .board__trail {
@@ -557,15 +608,15 @@ body::before {
 
 @keyframes tile-path-end-ring-grow {
   0% {
-    transform: scale(1.03);
+    transform: translateY(-3px) scale(1.03);
   }
 
   70% {
-    transform: scale(calc(var(--tile-path-end-scale) + 0.025));
+    transform: translateY(-3px) scale(calc(var(--tile-path-end-ring-scale) + 0.025));
   }
 
   100% {
-    transform: scale(var(--tile-path-end-scale));
+    transform: translateY(-3px) scale(var(--tile-path-end-ring-scale));
   }
 }
 
@@ -737,6 +788,52 @@ body::before {
   transform-origin: top center;
 }
 
+/* 可采集植物呼吸动画：
+   - 触发：玩家拖拽中且该格子在路径里，挂 .tile--harvestable-active
+   - 锚点：图片最底部 (bottom center)，视觉上从“根部”往上呼吸
+   - 节奏：第一次往左上拉伸 → 停顿 → 第二次往右上拉伸 → 停顿 → 循环
+   - 左右幅度很微弱（仅靠极小 skewX 模拟方向偏移）
+   - 保留 translateX(-50%) 居中，避免水平错位
+   - 通过 --harvestable-breathe-delay (negative) 让 DOM 重建后呼吸进度连续，不卡顿 */
+.tile--harvestable-active .tile__image--flower,
+.tile--harvestable-active .tile__image--apple-tree,
+.tile--harvestable-active .tile__image--tulip {
+  transform-origin: bottom center;
+  animation: tile-harvestable-breathe 2.2s ease-in-out infinite;
+  animation-delay: var(--harvestable-breathe-delay, 0ms);
+}
+
+@keyframes tile-harvestable-breathe {
+  /* 起点 */
+  0% {
+    transform: translateX(-50%) skewX(0deg) scaleX(1) scaleY(1);
+  }
+  /* 第一次：往左上拉伸（顶部轻微偏左） */
+  13% {
+    transform: translateX(-50%) skewX(1.2deg) scaleX(0.995) scaleY(1.03);
+  }
+  /* 回到中心 */
+  26% {
+    transform: translateX(-50%) skewX(0deg) scaleX(1) scaleY(1);
+  }
+  /* 停顿段 */
+  50% {
+    transform: translateX(-50%) skewX(0deg) scaleX(1) scaleY(1);
+  }
+  /* 第二次：往右上拉伸（顶部轻微偏右） */
+  63% {
+    transform: translateX(-50%) skewX(-1.2deg) scaleX(0.995) scaleY(1.03);
+  }
+  /* 回到中心 */
+  76% {
+    transform: translateX(-50%) skewX(0deg) scaleX(1) scaleY(1);
+  }
+  /* 停顿段 */
+  100% {
+    transform: translateX(-50%) skewX(0deg) scaleX(1) scaleY(1);
+  }
+}
+
 .tile--start .tile__ring {
   opacity: 0;
   transform: scale(1.015);
@@ -766,6 +863,8 @@ body::before {
 
 .tile--path-end {
   --tile-path-end-scale: 1.1;
+  /* 底层外描边 ring 单独控制：与 inner scale 解耦，仅影响白色外描边可见厚度 */
+  --tile-path-end-ring-scale: 1.14;
 }
 
 .tile--path-end:not(.tile--flipping):not(.tile--score-bounce) .tile__inner {
@@ -774,8 +873,9 @@ body::before {
 
 .tile--path .tile__ring,
 .tile--path.tile--start .tile__ring {
-  opacity: 1;
-  transform: scale(1.03);
+  /* 非选中路径格：外描边半透，和当前所在格做出区分 */
+  opacity: 0.5;
+  transform: translateY(-3px) scale(1.03);
   background: none;
   background-color: var(--tile-path-ring-color, var(--tile-path-ring));
   filter: none;
@@ -783,8 +883,9 @@ body::before {
 
 .tile--path-end .tile__ring,
 .tile--path-end.tile--start .tile__ring {
+  /* 当前所在格：保持完全不透明，强化视觉焦点 */
   opacity: 1;
-  transform: scale(var(--tile-path-end-scale));
+  transform: translateY(-3px) scale(var(--tile-path-end-ring-scale));
   filter: none;
 }
 
@@ -809,6 +910,13 @@ body::before {
 
 .tile--shake {
   animation: tile-shake 0.4s ease;
+}
+
+/* 当前所在格周围有鸡时，路径格持续抖动作为警戒反馈。
+   通过 --danger-alert-delay 让每个格子节奏错开。 */
+.tile--danger-alert {
+  animation: tile-danger-alert 0.36s linear infinite;
+  animation-delay: var(--danger-alert-delay, 0ms);
 }
 
 .tile--invalid-flash {
@@ -1113,6 +1221,31 @@ body.is-dragging-cursor * {
   filter: drop-shadow(0 5px 10px rgba(153, 83, 22, 0.25));
 }
 
+/* 结算阶段蜜蜂巡飞：沿本轮路径依次飞过每一格，最后顺势飞出屏幕 */
+.settlement-bee {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: center;
+  will-change: transform, opacity, rotate;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 4px 8px rgba(94, 70, 28, 0.25));
+  /* 极轻的悬浮摆动，配合飞行让蜜蜂不死板 */
+  animation: settlement-bee-bob 0.42s ease-in-out infinite;
+}
+
+@keyframes settlement-bee-bob {
+  0%,
+  100% {
+    rotate: -3deg;
+  }
+  50% {
+    rotate: 3deg;
+  }
+}
+
 .flower-fly__image {
   display: block;
   width: 100%;
@@ -1329,15 +1462,35 @@ body.is-dragging-cursor * {
   justify-content: center;
 }
 
-.bee-counter__icon {
+/* 外层 orbit：负责三点位移（叠加在 (5px, -20px) 基线上），不参与 idle/jump */
+.bee-counter__icon-orbit {
+  display: block;
   width: 124.9%;
-  height: auto;
   margin-top: -8%;
-  transform: translate(5px, -40px);
+  transform: translate(5px, -20px);
+  transform-origin: 50% 100%;
+  /* 三点悬停轨迹：A → B → C → A，每点停留期间继续保留内层 idle */
+  animation: bee-counter-orbit 5.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform;
+}
+
+.bee-counter__icon {
+  width: 100%;
+  height: auto;
+  display: block;
   transform-origin: 50% 100%;
   image-rendering: -webkit-optimize-contrast;
   pointer-events: none;
   user-select: none;
+  /* 待机：拉伸段 → 快速位移 → 拉伸段，循环。
+     用 linear 让 keyframes 中已设定好的缓动时间点（长拉伸段 / 短位移段）按实际占比表现。 */
+  animation: bee-counter-idle 4s linear infinite;
+  will-change: transform;
+}
+
+/* 结算巡飞期间：HUD 蜜蜂临时隐藏（蜜蜂出动巡飞了），结算回归后由 JS 移除此 class */
+.bee-counter__icon--away {
+  opacity: 0;
 }
 
 .bee-counter__number {
@@ -1366,25 +1519,103 @@ body.is-dragging-cursor * {
   margin-right: 1px;
 }
 
+/* jump 优先覆盖待机：放在 idle 之后，并保持原 jump 时长与曲线。
+   基线 (5px, -40px) 由外层 .bee-counter__icon-orbit 接管，这里只做相对位移与拉伸。 */
 .bee-counter__icon--jump {
   animation: bee-counter-jump 0.48s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes bee-counter-jump {
   0% {
-    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+    transform: translate(0, 0) scaleY(1) scaleX(1);
   }
   15% {
-    transform: translate(5px, -36px) scaleY(0.82) scaleX(1.12);
+    transform: translate(0, 4px) scaleY(0.82) scaleX(1.12);
   }
   45% {
-    transform: translate(5px, -72px) scaleY(1.08) scaleX(0.94);
+    transform: translate(0, -32px) scaleY(1.08) scaleX(0.94);
   }
   75% {
-    transform: translate(5px, -40px) scaleY(0.9) scaleX(1.08);
+    transform: translate(0, 0) scaleY(0.9) scaleX(1.08);
   }
   100% {
-    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+    transform: translate(0, 0) scaleY(1) scaleX(1);
+  }
+}
+
+/* 待机：节奏 = 拉伸段 → 快速位移 → 拉伸段。
+   拉伸幅度较弱，仅做一次拉伸再回原位；中间一段快速位移把蜜蜂带到下一个起点继续拉伸。 */
+@keyframes bee-counter-idle {
+  /* 拉伸段 1：从静止缓慢拉长到顶点，再回到原位（一次完整拉伸） */
+  0% {
+    transform: translate(0, 0) scaleX(1) scaleY(1);
+    animation-timing-function: ease-in-out;
+  }
+  20% {
+    transform: translate(0, -2.5px) scaleX(0.985) scaleY(1.02);
+    animation-timing-function: ease-in-out;
+  }
+  40% {
+    transform: translate(0, 0) scaleX(1) scaleY(1);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* 快速位移段：很短时间内迅速到下一个起点 */
+  50% {
+    transform: translate(0, 1px) scaleX(1) scaleY(1);
+    animation-timing-function: ease-in-out;
+  }
+  /* 拉伸段 2：再来一次完整拉伸 */
+  70% {
+    transform: translate(0, -2.5px) scaleX(0.985) scaleY(1.02);
+    animation-timing-function: ease-in-out;
+  }
+  90% {
+    transform: translate(0, 0) scaleX(1) scaleY(1);
+    animation-timing-function: linear;
+  }
+  100% {
+    transform: translate(0, 0) scaleX(1) scaleY(1);
+  }
+}
+
+/* 三点悬停轨迹：基线 (5px, -20px) + 三点偏移。
+   循环 5.4s：每段移动 ~0.6s（短促），每个点停留 ~1.2s（略长）。
+   三点不在同一直线，构成微弱三角悬停。 */
+@keyframes bee-counter-orbit {
+  /* A 点：基线 */
+  0% {
+    transform: translate(5px, -20px);
+  }
+  /* A 停留段（保持基线） */
+  22% {
+    transform: translate(5px, -20px);
+  }
+  /* A → B 移动到右上 */
+  33% {
+    transform: translate(9px, -24px);
+  }
+  /* B 停留段 */
+  55% {
+    transform: translate(9px, -24px);
+  }
+  /* B → C 移动到左上 */
+  66% {
+    transform: translate(1px, -23px);
+  }
+  /* C 停留段 */
+  88% {
+    transform: translate(1px, -23px);
+  }
+  /* C → A 回到基线 */
+  100% {
+    transform: translate(5px, -20px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bee-counter__icon,
+  .bee-counter__icon-orbit {
+    animation: none;
   }
 }
 
@@ -1434,6 +1665,22 @@ body.is-dragging-cursor * {
   }
   80% {
     transform: translate(calc(-50% + 3px), calc(-50% - 1px));
+  }
+}
+
+@keyframes tile-danger-alert {
+  0%,
+  100% {
+    transform: translate(-50%, -50%);
+  }
+  25% {
+    transform: translate(calc(-50% - 2px), calc(-50% + 1px));
+  }
+  50% {
+    transform: translate(calc(-50% + 2px), calc(-50% - 1px));
+  }
+  75% {
+    transform: translate(calc(-50% - 1px), calc(-50% + 2px));
   }
 }
 
