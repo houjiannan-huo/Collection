@@ -609,3 +609,116 @@
 ### Handoff
 - 当前状态：已落地，等 `@B-FIX` 实机回归
 - 下一步：浏览器人工跑 L1 → L12，确认 intro toast、盘面伸缩、win 面板"下一关"按钮、撞鸟反馈、tile 拓扑显示正常
+
+---
+
+## 任务卡：新增蜜蜂地块（A-PLN-BEE-01）
+
+- 任务 ID：`A-PLN-BEE-01`
+- 目标：在棋盘上新增 `bee` 类型地块，玩家累计经过 2 次即获得 1 只蜜蜂
+
+### 已确认口径（与用户拍板）
+
+#### 命名（由用户指定）
+- 类型：`bee`
+- 切图（用户提供，共 3 张）：
+  - `assets/tiles/bee_01.png` — 未采集（默认态，`passCount = 0`）
+  - `assets/tiles/bee_02.png` — 已采集 1 次（`passCount = 1`）
+  - `assets/tiles/bee_03.png` — 第 2 次松手结算瞬间的"出蜂"态
+- 飞蜜蜂动画素材：`assets/ui/cursor/cursor-default.png`（复用已有资源）
+- 资源映射建议：
+  ```js
+  const beeStageAssetMap = {
+    stage0: "./assets/tiles/bee_01.png",
+    stage1: "./assets/tiles/bee_02.png",
+    stage2: "./assets/tiles/bee_03.png",
+  };
+  const flyBeeAsset = "./assets/ui/cursor/cursor-default.png";
+  ```
+
+#### 规则
+1. 累计阈值：同一块 bee 累计经过 2 次（跨回合累计）→ 奖励 1 只蜜蜂（`gameState.remainingBees += 1`）
+2. 计数模型：每块 bee 独立 `passCount: 0 | 1`；同轮重复经过同一格去重（沿用 `alreadyInPendingScore`，只算 1 次）
+3. 第 1 次松手成功结算：
+   - 该格在飞币序列对应槽位 silentBounce 小跳 + 顶点切到 `bee_02`
+   - 无飞物、`remainingBees` 不变、不进 combo
+4. 第 2 次松手成功结算（视觉时序 = Q2 推荐 A）：
+   - 该格 silentBounce 跳到顶点瞬间切到 `bee_03`
+   - 同帧从该格发射飞蜜蜂图标（`cursor-default.png`）走飞币归集弧线 → HUD 蜜蜂计数器 `dom.beeCounterIcon`
+   - 飞物飞行期间该格保持 `bee_03`
+   - 飞物落地瞬间：`remainingBees += 1` + 计数器 pulse + 该格切回 `bee_01` + `passCount = 0`（可再次累计，Q1 = A）
+5. 撞鸟失败：pendingScoreList 作废即可，`passCount` 不推进（与 apple_tree pendingFruit 同套 rollback；passCount 本就在 commit 阶段才推进）
+6. 不进 `goalTargets` / `flowerHoney` / `appleHoney` / `tulipHoney` / `totalHoney`
+7. 不参与 Combo
+8. `isSafeTileType` 包含 bee（起点允许是 bee，enemy 不与之重叠）
+9. `remainingBees` 不封顶（Q4 = B），可超 `initialBeeCount` 储蓄
+10. 跨关重启：棋盘重生成天然归零
+
+#### 关卡引入节奏（Q5 = A）
+| 关 | bee 数 | 说明 |
+|---|---|---|
+| L1–L4 | 0 | 第 1 章不引入 |
+| **L5（rest）** | **1** | 首次引入，rest 关"回血"主题契合 |
+| L6–L8 | 0 | 本章核心是郁金香 |
+| **L9（rest）** | **1** | 再放 1 个 |
+| L10–L12 | 0（待定） | 默认 0；视实机难度可补 |
+
+- 对应关卡 `tileTypeRatioBaseCounts`：`empty - 1`、`bee + 1`，总 tile 数不变
+
+### 代码改动面（B-COD 参考）
+
+| 触点 | 改动 |
+|---|---|
+| `tileTypeOrder`（app.js line 2） | 加 `"bee"`，建议放 `"tulip"` 后、`"empty"` 前 |
+| `tileAssetMap`（line 281） | 加 `bee: "./assets/tiles/tile-empty.png"`（fallback 底图） |
+| 新增 `beeStageAssetMap` | 见上 |
+| 新增 `flyBeeAsset` 常量 | 见上 |
+| 12 关 `levelConfigs` | 全部加 `bee:` 字段；L5 / L9 设 1，其余 0；L5 / L9 同步 `empty - 1` |
+| 默认全局 `tileTypeRatioBaseCounts`（line 254） | 加 `bee: 0` |
+| `applyTileTypes`（line 597 区段） | 加 bee 候选池分配（参考 tulipCandidates 段，从 safeCandidates 中再切出 beeIds） |
+| `summary` 检查（line 654） | 加 bee 数量校验 |
+| `isSafeTileType`（line 1837） | 加 `\|\| type === "bee"` |
+| `tileState` 初始化 | bee 格初始 `passCount: 0` |
+| `getTileVisualMarkup`（line 2061 区段） | 加 `type === "bee"` 双层结构分支：底图 `tile-empty.png` + 前景按 `passCount` 取 `bee_01 / bee_02`；`bee_03` 仅在 silentBounce 顶点切图时由序列层临时切换 |
+| `evaluateRunResult` 入路径记账（line 3389 区段） | bee 条目入 `pendingScoreList`：`amount: 0`、`silentBounce: true`、`sideEffect: "advance-bee-pass"`、`willReward: (passCount + 1 >= 2)` |
+| `commitPendingEntry`（line 2888 区段） | 处理 `advance-bee-pass`：<br>• `willReward = false`：`passCount = 1`，顶点切 `bee_02`<br>• `willReward = true`：顶点切 `bee_03` + 调用 `flyBee(srcEl, dom.beeCounterIcon)`，落地回调中 `remainingBees += 1` + `beeCounterPulse` + 该格切回 `bee_01` + `passCount = 0` |
+| 新增 `flyBee()` | 复用 `flyFlower` / `flyTulip` 弧线管线，素材 `cursor-default.png`，终点 `dom.beeCounterIcon` |
+| CSS | 新增 `.tile__image--bee` / `.tile__image--bee-stage0/1/2`；首版三态共用一套尺寸定位（参照 tulip / apple-tree），实机不对再微调 |
+
+### 实施拆解（建议 9 模块）
+
+- **B1 类型与资源映射**：`tileTypeOrder` / `tileAssetMap` / `beeStageAssetMap` / `flyBeeAsset` / `isSafeTileType`
+- **B2 棋盘分布**：`applyTileTypes` 加 bee 候选池；`summary` 校验
+- **B3 显示层**：`getTileVisualMarkup` 加 bee 分支
+- **B4 经过记账**：`evaluateRunResult` 收集 bee 条目入 `pendingScoreList`
+- **B5 序列副作用**：`commitPendingEntry` 处理 `advance-bee-pass`
+- **B6 飞蜜蜂动画**：新增 `flyBee()`
+- **B7 关卡接入**：12 关 `levelConfigs` 加 `bee` 字段；L5 / L9 intro toast 文案
+- **B8 CSS**：`.tile__image--bee` 系列
+- **B9 自检**：`node --check app.js` + debug `gotoLevel(4)` / `gotoLevel(8)` 实机走 1 局
+
+### 验收标准
+
+1. L5 / L9 开局可见 1 个 bee 地块，默认 `bee_01.png`
+2. 第 1 次拖到 bee：松手序列中该格 silentBounce 跳 + 顶点切 `bee_02`，无飞物、`remainingBees` 不变、不进 combo
+3. 第 2 次拖到同一 bee：松手序列中该格 silentBounce 跳 + 顶点切 `bee_03`，同帧发射 `cursor-default.png` 弧线 → HUD 蜜蜂计数器，落地瞬间 `remainingBees += 1` + 计数器 pulse + 该格切回 `bee_01`
+4. 同轮重复经过同一 bee：去重，只算 1 次
+5. 撞鸟：本轮所有 bee 的 `passCount` 不推进
+6. bee 不进任何花蜜桶、不进 combo、不进 `goalTargets`
+7. 切关 / 重开：所有 bee 重置为 `bee_01` + `passCount = 0`
+8. `remainingBees` 超过 `initialBeeCount` 时仍正确显示与扣减
+9. `node --check app.js` 通过
+
+### 范围边界
+
+- 本轮只做 bee，不动 `orange_tree`
+- 不做出蜂瞬间额外 toast、不做棋盘整体特效、不动 BGM
+- 不做数字徽章
+- 不做计数跨关持久化
+
+### Handoff
+
+- 任务 ID：`A-PLN-BEE-01`
+- 当前状态：✅ 规则已锁，可开发
+- 下一步：`@B-COD` 按 B1–B9 拆模块实现 → 自检 → `@B-FIX` 实机回归
+- 阻塞：无

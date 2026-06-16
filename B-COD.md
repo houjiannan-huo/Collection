@@ -608,3 +608,58 @@
 
 ### 自检
 - `node --check app.js` 通过
+
+
+---
+
+## B-COD-BEE-01：蜜蜂地块
+
+任务来源：A-PLN.md `A-PLN-BEE-01`
+
+### 改动清单
+
+- `app.js`
+  - `tileTypeOrder` 加 `"bee"`（tulip 后、empty 前）
+  - 新增常量 `beeStageAssetMap`（stage0/1/2 → bee_01/02/03.png）和 `flyBeeAsset`（指向 `cursor-default.png`）
+  - `tileAssetMap.bee = tile-empty.png`（底图）
+  - `createTileTypeSummary()` 加 `bee: 0`
+  - 默认全局 `tileTypeRatioBaseCounts` 加 `bee: 0`
+  - 12 关 `levelConfigs` 全部加 `bee` 字段；L5 / L9 设 `bee: 1`，对应 `empty -1`；L5 / L9 intro/hooks 文案补蜜蜂巢
+  - `assignRandomTileTypes` 新增 bee 候选池切分（在 tulip 之后、flower 之前）
+  - `validateTypeMap` 加 bee 数量校验
+  - `getInitialGrowthStage("bee") = "stage0"`
+  - 新增 `getBeeStage(tileState)`
+  - `tileState` 初始化加 `beePassCount: 0`
+  - `isSafeTileType` 包含 `"bee"`
+  - `getSafeTileOverlayMarkup` 加 bee 分支
+  - `getTileTypeLabel("bee") = "蜜蜂巢"`
+  - `getFlightAssetForType("bee_reward") = flyBeeAsset`
+  - `enqueueTileCollection` 新增 bee 分支：push `{ type:"bee", amount:0, sideEffect:"advance-bee-pass", silentBounce:true, willReward:(passCount+1>=2) }`，不入 Combo
+  - `commitOneSideEffect` 新增 `advance-bee-pass` 分支：willReward → 切 stage2 + 调用 `spawnBeeRewardFlight`；否则 → 切 stage1 + `beePassCount = 1`
+  - 新增 `spawnBeeRewardFlight(tileId)`：复用现有飞行管线，目标 `dom.beeCounterIcon`，flight type=`bee_reward`，元数据带 `sourceTileId`
+  - 新增 `finalizeBeeReward(tileId)`：`remainingBees += 1` + 复位 `beePassCount=0 / growthStage=stage0` + 触发计数器跳动 + 重渲染
+  - 新增 `triggerBeeCounterPulse()`：手动添加 `bee-counter__icon--jump` 重启动画（用于增加蜜蜂时；renderHud 内置 pulse 仅在减少时触发）
+  - `finishFlowerFlight` 加 bee_reward 分支：调 `finalizeBeeReward(flight.sourceTileId)` + `playCollectSound()`，不走 commitGoalArrival
+- `style.css`
+  - 新增 `.tile__image--bee` 主样式（参照 tulip）
+  - `.tile__image--bee-stage1 / -stage2` 预留位（首版与 stage0 共用定位）
+
+### 规则与时序
+
+- 蜜蜂地块累计经过 2 次 → +1 蜜蜂；跨回合保留 `beePassCount`；棋盘重生成时归零（天然）
+- 第 1 次松手成功结算：在飞币序列槽位 silentBounce 跳到顶点切 bee_02，无飞物
+- 第 2 次松手成功结算：顶点切 bee_03 + 发射 `cursor-default.png` 飞蜜蜂走弧线 → HUD 蜜蜂图标，落地 `remainingBees += 1` + 计数器跳动 + 地块切回 bee_01 + `beePassCount = 0`
+- 同轮重复经过：复用 `alreadyInPendingScore` 去重
+- 撞鸟失败：pendingScoreList 整体作废，commit 不执行 → `beePassCount` 不推进
+- bee 不参与 Combo / 不进 `goalTargets` / 不进任何花蜜桶
+- `remainingBees` 不封顶
+- `waitForAllFlightsToLand` 自动会等到飞蜜蜂落地后再调用 `finalizeSuccessRun`
+
+### 自检
+
+- `node --check app.js` 通过
+- 节点级模拟（无 DOM 兜底分支）：
+  - L5 / L9 / L1 棋盘类型汇总正确（L5/L9 各 1 bee，L1 0 bee）
+  - 第 1 次 enqueue `willReward=false`；commit 后 `stage1 / passCount=1 / bees 不变`
+  - 第 2 次 enqueue `willReward=true`；commit 后通过无 DOM 兜底立即 `finalizeBeeReward` → `stage0 / passCount=0 / bees +1`
+  - 第 3 次 enqueue 又回到 `willReward=false`，循环正确

@@ -1,5 +1,5 @@
 const lockedDangerPreviewCount = 3;
-const tileTypeOrder = ["enemy", "flower", "apple_tree", "tulip", "empty"];
+const tileTypeOrder = ["enemy", "flower", "apple_tree", "tulip", "bee", "empty"];
 
 // ====== 关卡体系（A-PLN-LEVEL-DESIGN-FINAL）======
 // 三章 × 4 关 + 2 个 rest 关 = 共 12 关。每关都标注 4C Hooks 与 Kishōtenketsu 阶段。
@@ -109,9 +109,9 @@ const levelConfigs = [
   {
     // L1：7 格 mini 盘，零敌人零压力，约 2 个 run 完成。
     id: "L1", name: "第 1 关 · 拖动起步", chapter: 1, layout: LAYOUT_7,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 5, apple_tree: 0, tulip: 0, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 5, apple_tree: 0, tulip: 0, bee: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 4, apple: 0, tulip: 0 },
+    goalTargets: { flower: 4, apple: 0, appleFruit: 0, tulip: 0 },
     enemyPlacementRule: "default",
     hooks: "学习：按住一朵花，拖向相邻的另一朵",
     intro: "盘面只有花，没有敌人；按住起点，向相邻格滑动，松手结算。",
@@ -120,9 +120,9 @@ const levelConfigs = [
   {
     // L2：9 格 mini 盘，首次出现 1 只鸟，安全路径外才会出现。
     id: "L2", name: "第 2 关 · 鸟来了", chapter: 1, layout: LAYOUT_9,
-    tileTypeRatioBaseCounts: { enemy: 1, flower: 6, apple_tree: 0, tulip: 0, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 1, flower: 6, apple_tree: 0, tulip: 0, bee: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 4, apple: 0, tulip: 0 },
+    goalTargets: { flower: 4, apple: 0, appleFruit: 0, tulip: 0 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：撞鸟会让本轮收益清零、扣 1 只蜜蜂",
     intro: "盘上多了一只鸟。隔壁格的数字提醒你它在哪边——绕开它。",
@@ -131,9 +131,9 @@ const levelConfigs = [
   {
     // L3：11 格 mini 盘，苹果树登场，1 棵 apple = 1 个 run 即可完成苹果目标。
     id: "L3", name: "第 3 关 · 苹果开花了", chapter: 1, layout: LAYOUT_11,
-    tileTypeRatioBaseCounts: { enemy: 1, flower: 7, apple_tree: 1, tulip: 0, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 1, flower: 7, apple_tree: 1, tulip: 0, bee: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 5, apple: 1, tulip: 0 },
+    goalTargets: { flower: 5, apple: 1, appleFruit: 0, tulip: 0 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：苹果树会换装（开花→结果→采空）",
     intro: "粉色花是苹果树。只有开花期能收，采过会变成果实，再下一轮才回到花期。",
@@ -142,9 +142,9 @@ const levelConfigs = [
   {
     // L4：第 1 章 Conclude。鸟密度上升，apple 增到 2 棵保证目标可达。
     id: "L4", name: "第 4 关 · 第一章考核", chapter: 1, layout: LAYOUT_16,
-    tileTypeRatioBaseCounts: { enemy: 3, flower: 9, apple_tree: 2, tulip: 0, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 3, flower: 9, apple_tree: 2, tulip: 0, bee: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 10, apple: 1, tulip: 0 },
+    goalTargets: { flower: 10, apple: 1, appleFruit: 0, tulip: 0 },
     enemyPlacementRule: "default",
     hooks: "综合：花 + 苹果 + 3 只鸟",
     intro: "鸟更多了；记得用边界数字提前判断敌人位置。",
@@ -155,12 +155,12 @@ const levelConfigs = [
   {
     // L5 rest：零敌人 + 蜜蜂回满，纯花海"回血"。
     id: "L5", name: "第 5 关 · 休息日 · 花海", chapter: 0, layout: LAYOUT_13,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 10, apple_tree: 0, tulip: 0, empty: 3 },
-    initialBeeCount: 8,
-    goalTargets: { flower: 6, apple: 0, tulip: 0 },
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 10, apple_tree: 0, tulip: 0, bee: 1, empty: 2 },
+    initialBeeCount: 5,
+    goalTargets: { flower: 36, apple: 0, appleFruit: 0, tulip: 0 },
     enemyPlacementRule: "default",
-    hooks: "回血：没有敌人的安全关",
-    intro: "没有任何鸟，路径随便走，恢复手感。",
+    hooks: "回血：没有敌人的安全关 + 首次见到蜜蜂巢",
+    intro: "没有任何鸟，路径随便走，恢复手感。盘上多了一个蜜蜂巢——经过它两次，会送你 1 只蜜蜂。",
     designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0, kishoStage: "Rest", rhythm: "rest" },
   },
 
@@ -168,9 +168,9 @@ const levelConfigs = [
   {
     // L6：郁金香登场。只 1 只鸟（章节"鸟"重置回起步级），让玩家专注学新机制。
     id: "L6", name: "第 6 关 · 郁金香登场", chapter: 2, layout: LAYOUT_16,
-    tileTypeRatioBaseCounts: { enemy: 1, flower: 10, apple_tree: 0, tulip: 2, empty: 3 },
+    tileTypeRatioBaseCounts: { enemy: 1, flower: 10, apple_tree: 0, tulip: 2, bee: 0, empty: 3 },
     initialBeeCount: 7,
-    goalTargets: { flower: 8, apple: 0, tulip: 2 },
+    goalTargets: { flower: 8, apple: 0, appleFruit: 0, tulip: 2 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：紫色郁金香一朵 +2 花蜜",
     intro: "紫色花是郁金香，价值是小白花的 2 倍。",
@@ -179,9 +179,9 @@ const levelConfigs = [
   {
     // L7：盘面扩到 19 格 + 鸟密度上升。仍无苹果，专注 flower+tulip。
     id: "L7", name: "第 7 关 · 郁金香花田", chapter: 2, layout: LAYOUT_19,
-    tileTypeRatioBaseCounts: { enemy: 2, flower: 10, apple_tree: 0, tulip: 4, empty: 3 },
+    tileTypeRatioBaseCounts: { enemy: 2, flower: 10, apple_tree: 0, tulip: 4, bee: 0, empty: 3 },
     initialBeeCount: 6,
-    goalTargets: { flower: 10, apple: 0, tulip: 3 },
+    goalTargets: { flower: 10, apple: 0, appleFruit: 0, tulip: 3 },
     enemyPlacementRule: "default",
     hooks: "训练：在更大的盘面上规划郁金香路线",
     intro: "盘面变大了；尝试一笔画连续穿过多朵郁金香。",
@@ -190,9 +190,9 @@ const levelConfigs = [
   {
     // L8：三花同台 = 第 2 章 Conclude。
     id: "L8", name: "第 8 关 · 三花同台", chapter: 2, layout: LAYOUT_19,
-    tileTypeRatioBaseCounts: { enemy: 3, flower: 9, apple_tree: 2, tulip: 3, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 3, flower: 9, apple_tree: 2, tulip: 3, bee: 0, empty: 2 },
     initialBeeCount: 5,
-    goalTargets: { flower: 11, apple: 1, tulip: 3 },
+    goalTargets: { flower: 11, apple: 1, appleFruit: 0, tulip: 3 },
     enemyPlacementRule: "default",
     hooks: "综合：花 + 苹果 + 郁金香 + 3 只鸟",
     intro: "三类地块首次同台；优先做哪一类，自己决定。",
@@ -203,12 +203,12 @@ const levelConfigs = [
   {
     // L9 rest：郁金香主题的"回血"。零敌人 + 大量郁金香。
     id: "L9", name: "第 9 关 · 休息日 · 郁金香田", chapter: 0, layout: LAYOUT_16,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 7, apple_tree: 0, tulip: 6, empty: 3 },
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 7, apple_tree: 0, tulip: 6, bee: 1, empty: 2 },
     initialBeeCount: 8,
-    goalTargets: { flower: 5, apple: 0, tulip: 4 },
+    goalTargets: { flower: 5, apple: 0, appleFruit: 0, tulip: 4 },
     enemyPlacementRule: "default",
-    hooks: "回血：纯郁金香 × 花海，零敌人",
-    intro: "整片紫色，没有鸟。专注采郁金香、找最长一笔画。",
+    hooks: "回血：纯郁金香 × 花海，零敌人，蜜蜂巢回归",
+    intro: "整片紫色，没有鸟。再放 1 个蜜蜂巢，记得绕回去经过它第 2 次。",
     designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0, kishoStage: "Rest", rhythm: "rest" },
   },
 
@@ -216,9 +216,9 @@ const levelConfigs = [
   {
     // L10：22 格盘面首次出现，但敌人降回 3 只让玩家适应新尺寸。
     id: "L10", name: "第 10 关 · 大盘首秀", chapter: 3, layout: LAYOUT_22,
-    tileTypeRatioBaseCounts: { enemy: 3, flower: 11, apple_tree: 1, tulip: 3, empty: 4 },
+    tileTypeRatioBaseCounts: { enemy: 3, flower: 11, apple_tree: 1, tulip: 3, bee: 0, empty: 4 },
     initialBeeCount: 7,
-    goalTargets: { flower: 11, apple: 1, tulip: 3 },
+    goalTargets: { flower: 11, apple: 1, appleFruit: 0, tulip: 3 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：22 格大盘面，路径可以更长",
     intro: "盘面更大了；起点附近留出了安全区，先适应再深入。",
@@ -227,9 +227,9 @@ const levelConfigs = [
   {
     // L11：apple 翻倍 + 鸟群加密 = 第 3 章 Twist。
     id: "L11", name: "第 11 关 · 鸟群加密", chapter: 3, layout: LAYOUT_22,
-    tileTypeRatioBaseCounts: { enemy: 4, flower: 10, apple_tree: 2, tulip: 3, empty: 3 },
+    tileTypeRatioBaseCounts: { enemy: 4, flower: 10, apple_tree: 2, tulip: 3, bee: 0, empty: 3 },
     initialBeeCount: 6,
-    goalTargets: { flower: 12, apple: 2, tulip: 4 },
+    goalTargets: { flower: 12, apple: 2, appleFruit: 0, tulip: 4 },
     enemyPlacementRule: "default",
     hooks: "训练：苹果翻倍 + 4 只鸟",
     intro: "苹果树变成两棵，但鸟也跟着加密了。",
@@ -238,9 +238,9 @@ const levelConfigs = [
   {
     // L12 终局：起点附近无敌人、远端鸟群密集，制造"先稳后炸"的心流打破。
     id: "L12", name: "第 12 关 · 终局", chapter: 3, layout: LAYOUT_22,
-    tileTypeRatioBaseCounts: { enemy: 5, flower: 10, apple_tree: 2, tulip: 3, empty: 2 },
+    tileTypeRatioBaseCounts: { enemy: 5, flower: 10, apple_tree: 2, tulip: 3, bee: 0, empty: 2 },
     initialBeeCount: 5,
-    goalTargets: { flower: 14, apple: 2, tulip: 5 },
+    goalTargets: { flower: 14, apple: 2, appleFruit: 0, tulip: 5 },
     enemyPlacementRule: "far-from-start-then-cluster",
     hooks: "终局：开局宽松，远端鸟群密集",
     intro: "起点附近是安全的——但深处藏着 5 只鸟，决定要走多远。",
@@ -251,13 +251,13 @@ const levelConfigs = [
 let currentLevelIndex = 0;
 
 // 以下变量原为顶层 const，现降级为 let，由 applyLevelConfig 派生
-let tileTypeRatioBaseCounts = { enemy: 0, flower: 0, apple_tree: 0, tulip: 0, empty: 0 };
+let tileTypeRatioBaseCounts = { enemy: 0, flower: 0, apple_tree: 0, tulip: 0, bee: 0, empty: 0 };
 let layoutRows = [];
 let rowTileIds = [];
 let rowSlots = [];
 let startTileId = "";
 let initialBeeCount = 0;
-let goalTargets = { flower: 0, apple: 0, tulip: 0 };
+let goalTargets = { flower: 0, apple: 0, appleFruit: 0, tulip: 0 };
 let honeyGoalTarget = 0;
 let enemyPlacementRule = "default";
 const initialStatusText = "选择任意已翻开的格子（天敌除外）作为起点，按住滑动。";
@@ -285,6 +285,7 @@ const tileAssetMap = {
   flower: "./assets/tiles/tile-flower.png",
   apple_tree: "./assets/tiles/tile-empty.png",
   tulip: "./assets/tiles/tile-empty.png",
+  bee: "./assets/tiles/bee_01.png?v=bee-20260616-1",
 };
 const threatEdgeAssetMap = {
   left: "./assets/tiles/tile-edge-left.png",
@@ -307,6 +308,14 @@ const appleTreeStateAssetMap = {
   fruit: "./assets/tiles/apple_tree_fruit_01.png",
   harvested: "./assets/tiles/apple_tree_harvested_01.png",
 };
+// A-PLN-BEE-01：蜜蜂地块 3 张切图（未采集 / 已采集 1 次 / 第 2 次结算"出蜂"态）
+const beeStageAssetMap = {
+  stage0: "./assets/tiles/bee_01.png?v=bee-20260616-1",
+  stage1: "./assets/tiles/bee_02.png?v=bee-20260616-1",
+  stage2: "./assets/tiles/bee_03.png?v=bee-20260616-1",
+};
+// 飞蜜蜂动画素材：复用 HUD 蜜蜂图标的 cursor-default.png
+const flyBeeAsset = "./assets/ui/cursor/cursor-default.png";
 const enemyOverlayAsset = "./assets/tiles/Bird_01.png?v=enemy-20260613-1";
 let enemyOverlayDisplayAsset = enemyOverlayAsset;
 const collectFeedbackConfig = {
@@ -323,6 +332,15 @@ const comboConfig = {
   soundThrottleMs: 90,
 };
 const flowerFlyAsset = "./assets/effects/flower-fly.svg";
+const appleBlossomFlyAsset = "./assets/ui/icon_apple_01.png";
+const appleFruitFlyAsset = "./assets/ui/icon_apple_02.png";
+
+function getFlightAssetForType(type) {
+  if (type === "apple_tree_blossom") return appleBlossomFlyAsset;
+  if (type === "apple_tree_fruit") return appleFruitFlyAsset;
+  if (type === "bee_reward") return flyBeeAsset;
+  return flowerFlyAsset;
+}
 const tileRevealSoundAsset = "./assets/audio/sfx/tile-reveal.wav";
 const tileEnemyHitSoundAsset = "./assets/audio/sfx/tile-enemy-hit.wav";
 const comboSoundAsset = "./assets/audio/sfx/sfx-combo.mp3";
@@ -365,6 +383,7 @@ function createTileTypeSummary() {
     flower: 0,
     apple_tree: 0,
     tulip: 0,
+    bee: 0,
     empty: 0,
   };
 }
@@ -491,7 +510,7 @@ function applyLevelConfig(levelIndex) {
   tileTypeRatioBaseCounts = { ...cfg.tileTypeRatioBaseCounts };
   initialBeeCount = cfg.initialBeeCount;
   goalTargets = { ...cfg.goalTargets };
-  honeyGoalTarget = goalTargets.flower + goalTargets.apple + goalTargets.tulip;
+  honeyGoalTarget = goalTargets.flower + goalTargets.apple + goalTargets.appleFruit + goalTargets.tulip;
   enemyPlacementRule = cfg.enemyPlacementRule || "default";
 
   validateLayoutConfig();
@@ -590,7 +609,11 @@ function assignRandomTileTypes(randomFn = Math.random) {
   const tulipIds = new Set(
     shuffleArray(tulipCandidates, randomFn).slice(0, tileTypeCounts.tulip)
   );
-  const flowerCandidates = tulipCandidates.filter((id) => !tulipIds.has(id));
+  const beeCandidates = tulipCandidates.filter((id) => !tulipIds.has(id));
+  const beeIds = new Set(
+    shuffleArray(beeCandidates, randomFn).slice(0, tileTypeCounts.bee)
+  );
+  const flowerCandidates = beeCandidates.filter((id) => !beeIds.has(id));
   const flowerIds = new Set(
     shuffleArray(flowerCandidates, randomFn).slice(0, tileTypeCounts.flower)
   );
@@ -611,6 +634,10 @@ function assignRandomTileTypes(randomFn = Math.random) {
 
       if (tulipIds.has(id)) {
         return [id, "tulip"];
+      }
+
+      if (beeIds.has(id)) {
+        return [id, "bee"];
       }
 
       return [id, "empty"];
@@ -644,10 +671,11 @@ function validateTypeMap(typeMap) {
     summary.flower !== tileTypeCounts.flower ||
     summary.apple_tree !== tileTypeCounts.apple_tree ||
     summary.tulip !== tileTypeCounts.tulip ||
+    summary.bee !== tileTypeCounts.bee ||
     summary.empty !== tileTypeCounts.empty
   ) {
     throw new Error(
-      `自定义 typeMap 不满足当前数量约束：enemy ${tileTypeCounts.enemy} / flower ${tileTypeCounts.flower} / apple_tree ${tileTypeCounts.apple_tree} / tulip ${tileTypeCounts.tulip} / empty ${tileTypeCounts.empty}`
+      `自定义 typeMap 不满足当前数量约束：enemy ${tileTypeCounts.enemy} / flower ${tileTypeCounts.flower} / apple_tree ${tileTypeCounts.apple_tree} / tulip ${tileTypeCounts.tulip} / bee ${tileTypeCounts.bee} / empty ${tileTypeCounts.empty}`
     );
   }
 
@@ -676,6 +704,7 @@ function getInitialGrowthStage(type) {
   if (type === "apple_tree") return "blossom";
   if (type === "flower") return "bloom";
   if (type === "tulip") return "bloom";
+  if (type === "bee") return "stage0";
   return null;
 }
 
@@ -687,6 +716,11 @@ function getFlowerStage(tileState) {
 function getTulipStage(tileState) {
   if (!tileState || tileState.type !== "tulip") return null;
   return tulipStageAssetMap[tileState.growthStage] ? tileState.growthStage : "bloom";
+}
+
+function getBeeStage(tileState) {
+  if (!tileState || tileState.type !== "bee") return null;
+  return beeStageAssetMap[tileState.growthStage] ? tileState.growthStage : "stage0";
 }
 
 function buildTypeMap(options = {}) {
@@ -729,6 +763,7 @@ function createInitialGameState(options = {}) {
           pendingFruit: false,
           fruitRoundCount: 0,
           pendingReBloom: false,
+          beePassCount: 0,
           revealed,
           unlocked: revealed,
           dangerCount: getDangerCount(tile.id, typeMap),
@@ -748,6 +783,7 @@ function createInitialGameState(options = {}) {
     totalHoney: 0,
     flowerHoney: 0,
     appleHoney: 0,
+    appleFruitHoney: 0,
     tulipHoney: 0,
     remainingBees: initialBeeCount,
     isDragging: false,
@@ -802,9 +838,11 @@ const dom = hasDom
       goalCard: document.getElementById("goal-card"),
       goalFlower: document.getElementById("goal-flower"),
       goalApple: document.getElementById("goal-apple"),
+      goalAppleFruit: document.getElementById("goal-apple-fruit"),
       goalTulip: document.getElementById("goal-tulip"),
       goalFlowerItem: document.querySelector('.goal-item[data-goal="flower"]'),
       goalAppleItem: document.querySelector('.goal-item[data-goal="apple"]'),
+      goalAppleFruitItem: document.querySelector('.goal-item[data-goal="apple-fruit"]'),
       goalTulipItem: document.querySelector('.goal-item[data-goal="tulip"]'),
       beesLeft: document.getElementById("bees-left"),
       beeCounterIcon: document.getElementById("bee-counter-icon"),
@@ -1300,6 +1338,7 @@ function getStateSnapshot() {
     totalHoney: gameState.totalHoney,
     flowerHoney: gameState.flowerHoney,
     appleHoney: gameState.appleHoney,
+    appleFruitHoney: gameState.appleFruitHoney,
     tulipHoney: gameState.tulipHoney,
     isGameOver: gameState.isGameOver,
     comboCount: comboState.count,
@@ -1371,6 +1410,7 @@ function getGoalIconElement(type) {
   if (!dom) return null;
   if (type === "flower") return dom.goalFlower?.parentElement || null;
   if (type === "apple_tree_blossom") return dom.goalApple?.parentElement || null;
+  if (type === "apple_tree_fruit") return dom.goalAppleFruit?.parentElement || null;
   if (type === "tulip") return dom.goalTulip?.parentElement || null;
   return null;
 }
@@ -1402,10 +1442,11 @@ function getQuadraticBezierPoint(start, control, end, progress) {
   };
 }
 
-function createFlowerFlightElement() {
+function createFlowerFlightElement(type) {
   const element = document.createElement("div");
   element.className = "flower-fly";
-  element.innerHTML = `<img class="flower-fly__image" src="${flowerFlyAsset}" alt="" />`;
+  const src = getFlightAssetForType(type);
+  element.innerHTML = `<img class="flower-fly__image" src="${src}" alt="" />`;
   return element;
 }
 
@@ -1594,12 +1635,15 @@ function commitGoalArrival(type) {
     gameState.flowerHoney += 1;
   } else if (type === "apple_tree_blossom") {
     gameState.appleHoney += 1;
+  } else if (type === "apple_tree_fruit") {
+    gameState.appleFruitHoney += 1;
   } else if (type === "tulip") {
     gameState.tulipHoney += 1;
   } else {
     return;
   }
-  gameState.totalHoney = gameState.flowerHoney + gameState.appleHoney + gameState.tulipHoney;
+  gameState.totalHoney =
+    gameState.flowerHoney + gameState.appleHoney + gameState.appleFruitHoney + gameState.tulipHoney;
   renderGoalHUD();
 }
 
@@ -1612,6 +1656,14 @@ function finishFlowerFlight(flightId) {
 
   flight.element.remove();
   feedbackState.activeFlights.delete(flightId);
+
+  if (flight.type === "bee_reward") {
+    // A-PLN-BEE-01：飞蜜蜂落地，复位地块 + 蜜蜂 +1 + 计数器跳动
+    finalizeBeeReward(flight.sourceTileId);
+    playCollectSound();
+    return;
+  }
+
   commitGoalArrival(flight.type);
   playGoalCollectFeedback(flight.type);
   playCollectSound();
@@ -1643,7 +1695,7 @@ function animateFlowerToGoal(startPoint, runToken, type) {
     x: midX + dx * 0.12,
     y: Math.min(startPoint.y, endPoint.y) - arcHeight,
   };
-  const element = createFlowerFlightElement();
+  const element = createFlowerFlightElement(type);
   const flightId = ++feedbackState.flightCounter;
 
   element.style.transform = `translate(${startPoint.x}px, ${startPoint.y}px) translate(-50%, -50%) scale(0.45)`;
@@ -1660,6 +1712,88 @@ function animateFlowerToGoal(startPoint, runToken, type) {
     type,
   });
   ensureFlightLoop();
+}
+
+// A-PLN-BEE-01：飞蜜蜂动画。复用现有飞行管线（feedbackState.activeFlights + flightRafId），
+// 但终点是 HUD 蜜蜂计数器图标 dom.beeCounterIcon。
+// 落地后由 finishFlowerFlight -> commitGoalArrival("bee_reward") 处理 +1 蜜蜂、地块复位与计数器跳动。
+function spawnBeeRewardFlight(tileId) {
+  if (!hasDom || !dom?.fxOverlay || !dom?.beeCounterIcon) {
+    // 无 DOM 兜底：直接复位状态、+1 蜜蜂
+    finalizeBeeReward(tileId);
+    return;
+  }
+
+  let startPoint = getTileFlightOrigin(tileId);
+  if (!startPoint) {
+    renderBoard();
+    startPoint = getTileFlightOrigin(tileId);
+  }
+
+  const endPoint = getOverlayRelativePointFromRect(
+    dom.beeCounterIcon.getBoundingClientRect(),
+    0.5
+  );
+
+  if (!startPoint || !endPoint) {
+    finalizeBeeReward(tileId);
+    return;
+  }
+
+  const runToken = feedbackState.currentRunToken;
+  const dx = endPoint.x - startPoint.x;
+  const midX = startPoint.x + dx * 0.5;
+  const arcHeight = Math.min(
+    180,
+    Math.max(88, Math.abs(dx) * 0.16 + Math.abs(endPoint.y - startPoint.y) * 0.22)
+  );
+  const controlPoint = {
+    x: midX + dx * 0.12,
+    y: Math.min(startPoint.y, endPoint.y) - arcHeight,
+  };
+  const element = createFlowerFlightElement("bee_reward");
+  const flightId = ++feedbackState.flightCounter;
+
+  element.style.transform = `translate(${startPoint.x}px, ${startPoint.y}px) translate(-50%, -50%) scale(0.45)`;
+  dom.fxOverlay.appendChild(element);
+  feedbackState.activeFlights.set(flightId, {
+    element,
+    start: startPoint,
+    control: controlPoint,
+    end: endPoint,
+    startTime: getNow(),
+    duration: collectFeedbackConfig.flyDuration,
+    rotationStart: -18 + Math.random() * 14,
+    rotationDelta: 22 + Math.random() * 26,
+    type: "bee_reward",
+    sourceTileId: tileId,
+    runToken,
+  });
+  ensureFlightLoop();
+}
+
+// 飞蜜蜂落地：+1 蜜蜂、地块复位回 stage0、计数器跳动。
+function finalizeBeeReward(tileId) {
+  const tileState = gameState.tileStateMap[tileId];
+  if (tileState && tileState.type === "bee") {
+    tileState.beePassCount = 0;
+    tileState.growthStage = "stage0";
+  }
+  gameState.remainingBees += 1;
+  triggerBeeCounterPulse();
+  if (hasDom) {
+    renderHud();
+    renderBoard();
+  }
+}
+
+// 主动触发 HUD 蜜蜂计数器跳动（renderHud 的内置 pulse 只在 bees 减少时触发）。
+function triggerBeeCounterPulse() {
+  if (!dom?.beeCounterIcon) return;
+  const icon = dom.beeCounterIcon;
+  icon.classList.remove("bee-counter__icon--jump");
+  void icon.offsetWidth;
+  icon.classList.add("bee-counter__icon--jump");
 }
 
 function spawnFlowerFlyEffect(tileId, type) {
@@ -1817,7 +1951,13 @@ function triggerTileFlip(tileId) {
 }
 
 function isSafeTileType(type) {
-  return type === "flower" || type === "apple_tree" || type === "tulip" || type === "empty";
+  return (
+    type === "flower" ||
+    type === "apple_tree" ||
+    type === "tulip" ||
+    type === "bee" ||
+    type === "empty"
+  );
 }
 
 function getAppleTreeGrowthStage(tileState) {
@@ -2045,6 +2185,10 @@ function getTileTypeLabel(type) {
     return "郁金香";
   }
 
+  if (type === "bee") {
+    return "蜜蜂巢";
+  }
+
   if (type === "empty") {
     return "安全空格";
   }
@@ -2182,6 +2326,23 @@ function prepareEnemyOverlayAsset() {
 }
 
 function getTileVisualMarkup(tileState, fallbackAsset) {
+  // A-PLN-BEE-01：蜜蜂地块整图替换（bee_0X.png 自带蜂巢底，不走 safe-stack 的绿底 + overlay）
+  if (tileState?.revealed && tileState.type === "bee") {
+    const stage = getBeeStage(tileState);
+    const threatEdges = getThreatEdgeDirections(tileState);
+    return `
+      <span class="tile__image-stack tile__image-stack--bee">
+        <img class="tile__image tile__image--base" src="${beeStageAssetMap[stage]}" alt="" />
+        ${threatEdges
+          .map(
+            (edge) =>
+              `<img class="tile__image tile__image--layer tile__image--threat-edge" src="${threatEdgeAssetMap[edge]}" alt="" />`
+          )
+          .join("")}
+      </span>
+    `;
+  }
+
   if (tileState?.revealed && isSafeTileType(tileState.type)) {
     const threatEdges = getThreatEdgeDirections(tileState);
 
@@ -2320,24 +2481,28 @@ function renderGoalHUD() {
   }
   const fRemain = Math.max(0, goalTargets.flower - gameState.flowerHoney);
   const aRemain = Math.max(0, goalTargets.apple - gameState.appleHoney);
+  const afRemain = Math.max(0, goalTargets.appleFruit - gameState.appleFruitHoney);
   const tRemain = Math.max(0, goalTargets.tulip - gameState.tulipHoney);
   if (dom.goalFlower) dom.goalFlower.textContent = String(fRemain);
   if (dom.goalApple) dom.goalApple.textContent = String(aRemain);
+  if (dom.goalAppleFruit) dom.goalAppleFruit.textContent = String(afRemain);
   if (dom.goalTulip) dom.goalTulip.textContent = String(tRemain);
   dom.goalCard.setAttribute("aria-label", buildGoalCardAriaLabel());
   dom.goalFlower?.parentElement?.classList.toggle("is-done", fRemain === 0);
   dom.goalApple?.parentElement?.classList.toggle("is-done", aRemain === 0);
+  dom.goalAppleFruit?.parentElement?.classList.toggle("is-done", afRemain === 0);
   dom.goalTulip?.parentElement?.classList.toggle("is-done", tRemain === 0);
 }
 
 // ====== A-PLN-GOAL-DYNAMIC-01：按关目标按需显示 ======
-const GOAL_LABEL_MAP = { flower: "小白花", apple: "苹果花", tulip: "郁金香" };
-const GOAL_STATE_KEY = { flower: "flowerHoney", apple: "appleHoney", tulip: "tulipHoney" };
+const GOAL_LABEL_MAP = { flower: "小白花", apple: "苹果花", appleFruit: "苹果", tulip: "郁金香" };
+const GOAL_STATE_KEY = { flower: "flowerHoney", apple: "appleHoney", appleFruit: "appleFruitHoney", tulip: "tulipHoney" };
 
 function getActiveGoalKeys() {
   const keys = [];
   if (goalTargets.flower > 0) keys.push("flower");
   if (goalTargets.apple > 0) keys.push("apple");
+  if (goalTargets.appleFruit > 0) keys.push("appleFruit");
   if (goalTargets.tulip > 0) keys.push("tulip");
   return keys;
 }
@@ -2369,6 +2534,7 @@ function applyGoalVisibility() {
   if (!dom) return;
   if (dom.goalFlowerItem) dom.goalFlowerItem.hidden = goalTargets.flower === 0;
   if (dom.goalAppleItem) dom.goalAppleItem.hidden = goalTargets.apple === 0;
+  if (dom.goalAppleFruitItem) dom.goalAppleFruitItem.hidden = goalTargets.appleFruit === 0;
   if (dom.goalTulipItem) dom.goalTulipItem.hidden = goalTargets.tulip === 0;
   if (dom.goalCard) dom.goalCard.setAttribute("aria-label", buildGoalCardAriaLabel());
 }
@@ -2867,6 +3033,18 @@ function commitOneSideEffect(entry, options = {}) {
     tileState.growthStage = "sprout";
   } else if (entry.sideEffect === "advance-tulip-to-bloom") {
     tileState.growthStage = "bloom";
+  } else if (entry.sideEffect === "advance-bee-pass") {
+    // A-PLN-BEE-01：经过蜜蜂地块的副作用提交。
+    // 顶点切图时机：tick() 会在 bounceDurationMs/2 调用本函数。
+    if (entry.willReward) {
+      // 第 2 次松手结算：顶点切到 bee_03，发射飞蜜蜂（落地后再切回 bee_01 并 +1 蜜蜂）
+      tileState.growthStage = "stage2";
+      spawnBeeRewardFlight(entry.tileId);
+    } else {
+      // 第 1 次松手结算：顶点切到 bee_02，passCount = 1
+      tileState.growthStage = "stage1";
+      tileState.beePassCount = 1;
+    }
   }
 
   if (options.render) {
@@ -3103,6 +3281,7 @@ function finalizeSuccessRun(context) {
   // 分项汇总（仅用于 logEvent / statusText，不再写入 gameState）
   let gainedFlower = 0;
   let gainedApple = 0;
+  let gainedAppleFruit = 0;
   let gainedTulip = 0;
   pendingList.forEach((entry) => {
     const amount = entry.amount || 0;
@@ -3111,6 +3290,8 @@ function finalizeSuccessRun(context) {
       gainedFlower += amount;
     } else if (entry.type === "apple_tree_blossom") {
       gainedApple += amount;
+    } else if (entry.type === "apple_tree_fruit") {
+      gainedAppleFruit += amount;
     } else if (entry.type === "tulip") {
       gainedTulip += amount;
     }
@@ -3130,10 +3311,12 @@ function finalizeSuccessRun(context) {
     gainedHoney,
     gainedFlower,
     gainedApple,
+    gainedAppleFruit,
     gainedTulip,
     totalHoney: gameState.totalHoney,
     flowerHoney: gameState.flowerHoney,
     appleHoney: gameState.appleHoney,
+    appleFruitHoney: gameState.appleFruitHoney,
     tulipHoney: gameState.tulipHoney,
     nextStartTileId,
     sideEffects: pendingList.map((entry) => ({ tileId: entry.tileId, sideEffect: entry.sideEffect })),
@@ -3143,6 +3326,7 @@ function finalizeSuccessRun(context) {
   if (
     gameState.flowerHoney >= goalTargets.flower &&
     gameState.appleHoney >= goalTargets.apple &&
+    gameState.appleFruitHoney >= goalTargets.appleFruit &&
     gameState.tulipHoney >= goalTargets.tulip
   ) {
     gameState.isGameWin = true;
@@ -3159,6 +3343,7 @@ function finalizeSuccessRun(context) {
       beesLeft: gameState.remainingBees,
       flowerHoney: gameState.flowerHoney,
       appleHoney: gameState.appleHoney,
+      appleFruitHoney: gameState.appleFruitHoney,
       tulipHoney: gameState.tulipHoney,
     });
     logEvent("通关", getStateSnapshot());
@@ -3172,6 +3357,7 @@ function finalizeSuccessRun(context) {
       beesLeft: gameState.remainingBees,
       flowerHoney: gameState.flowerHoney,
       appleHoney: gameState.appleHoney,
+      appleFruitHoney: gameState.appleFruitHoney,
       tulipHoney: gameState.tulipHoney,
     });
   }
@@ -3381,10 +3567,11 @@ function enqueueTileCollection(tileId) {
     tileState.type === "apple_tree" &&
     getAppleTreeGrowthStage(tileState) === "blossom"
   ) {
+    // 开花期：采两朵苹果花
     gameState.pendingScoreList.push({
       tileId,
       type: "apple_tree_blossom",
-      amount: 1,
+      amount: 2,
       sideEffect: "advance-to-fruit",
     });
     incrementCombo(tileId);
@@ -3392,13 +3579,14 @@ function enqueueTileCollection(tileId) {
     tileState.type === "apple_tree" &&
     getAppleTreeGrowthStage(tileState) === "fruit"
   ) {
+    // 结果期：采一个苹果
     gameState.pendingScoreList.push({
       tileId,
       type: "apple_tree_fruit",
-      amount: 0,
+      amount: 1,
       sideEffect: "advance-to-harvested",
-      silentBounce: true,
     });
+    incrementCombo(tileId);
   } else if (
     tileState.type === "apple_tree" &&
     getAppleTreeGrowthStage(tileState) === "harvested"
@@ -3409,6 +3597,19 @@ function enqueueTileCollection(tileId) {
       amount: 0,
       sideEffect: "advance-to-blossom",
       silentBounce: true,
+    });
+  } else if (tileState.type === "bee") {
+    // A-PLN-BEE-01：蜜蜂地块累计经过 2 次 → +1 蜜蜂
+    // 每次经过都走 silentBounce：amount=0，不计 Combo、不进花蜜桶
+    // 第 2 次（passCount 当前为 1）触发奖励：顶点切到 bee_03，并发射飞蜜蜂
+    const willReward = (tileState.beePassCount || 0) + 1 >= 2;
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "bee",
+      amount: 0,
+      sideEffect: "advance-bee-pass",
+      silentBounce: true,
+      willReward,
     });
   }
 }

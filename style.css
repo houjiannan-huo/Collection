@@ -607,6 +607,9 @@ body::before {
   inset: calc(10% + 44px) auto auto 50%;
 }
 
+/* A-PLN-BEE-VISUAL-02：蜜蜂地块改为整图替换。bee_0X.png 自带蜂巢底，
+   不再使用绿底 + overlay；走默认 .tile__image--base 的 100% 填充规则。 */
+
 .tile__image--enemy {
   z-index: 2;
   width: 62%;
