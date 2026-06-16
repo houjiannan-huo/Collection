@@ -157,9 +157,9 @@ const levelConfigs = [
   {
     // L5 rest1：零敌人 + 蜂巢首次引入。纯白花海回血。
     id: "L5", name: "第 5 关 · 休息日 · 蜂巢初识", chapter: 0, layout: LAYOUT_13,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 9, flower_yellow: 0, flower_red: 0, apple_tree: 0, tulip: 0, tulip_white: 0, bee: 1, caterpillar: 0, empty: 3 },
-    initialBeeCount: 8,
-    goalTargets: { flower: 8, flower_yellow: 0, flower_red: 0, apple: 0, appleFruit: 0, tulip: 0, tulip_white: 0 },
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 8, flower_yellow: 0, flower_red: 0, apple_tree: 0, tulip: 0, tulip_white: 0, bee: 4, caterpillar: 0, empty: 1 },
+    initialBeeCount: 2,
+    goalTargets: { flower: 16, flower_yellow: 0, flower_red: 0, apple: 0, appleFruit: 0, tulip: 0, tulip_white: 0 },
     enemyPlacementRule: "default",
     hooks: "回血：纯白花海 + 首次见到蜂巢",
     intro: "没有鸟。盘上多了一个蜂巢——同一格经过两次会送你 1 只蜜蜂。",
@@ -366,11 +366,13 @@ const flowerRedStageAssetMap = {
 const tulipStageAssetMap = {
   bloom: "./assets/tiles/tulip_bloom_01.png",
   sprout: "./assets/tiles/tulip_sprout_01.png?v=tulip-20260616-1",
+  bud: "./assets/tiles/tulip_bud_01.png?v=tulip-20260616-1",
 };
 // A-PLN-TULIP-WHITE-01：白色郁金香阶段图，逻辑完全复用现有郁金香
 const tulipWhiteStageAssetMap = {
   bloom: "./assets/tiles/tulip_bloom_03.png?v=tulip-20260616-1",
   sprout: "./assets/tiles/tulip_sprout_03.png?v=tulip-20260616-1",
+  bud: "./assets/tiles/tulip_bud_03.png?v=tulip-20260616-1",
 };
 const appleTreeStateAssetMap = {
   blossom: "./assets/tiles/apple_tree_blossom_01.png",
@@ -2546,8 +2548,8 @@ function alignBeeCounterToGoals() {
   const desiredLeft = pillRect.left - beeRect.width - gap;
   const minLeft = 4; // 极窄屏兜底，避免被切出 viewport
   dom.beeCounter.style.left = `${Math.max(minLeft, desiredLeft)}px`;
-  // 同步 top：让蜜蜂 UI 顶部与目标 pill 顶部对齐，避免移动端把 pill 推开后两者错位。
-  dom.beeCounter.style.top = `${Math.max(0, pillRect.top)}px`;
+  // top 由 CSS 控制（贴顶部 safe-area），不在这里再次覆盖；
+  // 这样蜜蜂 UI 始终紧贴屏幕上沿，而目标 pill 仍可以保留 Dynamic Island 留白。
 }
 
 function getTileTypeLabel(type) {
@@ -3673,10 +3675,14 @@ function commitOneSideEffect(entry, options = {}) {
     tileState.growthStage = "bloom";
   } else if (entry.sideEffect === "advance-tulip-to-sprout") {
     tileState.growthStage = "sprout";
+  } else if (entry.sideEffect === "advance-tulip-to-bud") {
+    tileState.growthStage = "bud";
   } else if (entry.sideEffect === "advance-tulip-to-bloom") {
     tileState.growthStage = "bloom";
   } else if (entry.sideEffect === "advance-tulip-white-to-sprout") {
     tileState.growthStage = "sprout";
+  } else if (entry.sideEffect === "advance-tulip-white-to-bud") {
+    tileState.growthStage = "bud";
   } else if (entry.sideEffect === "advance-tulip-white-to-bloom") {
     tileState.growthStage = "bloom";
   } else if (entry.sideEffect === "advance-bee-pass") {
@@ -4450,12 +4456,20 @@ function enqueueTileCollection(tileId) {
         sideEffect: "advance-tulip-to-sprout",
       });
       incrementCombo(tileId);
-    } else {
-      // sprout：0 花蜜，不触发 Combo / 不出飞花，
-      // silentBounce 小跳 + 顶点切回 bloom
+    } else if (tulipStage === "sprout") {
+      // sprout：0 花蜜，silentBounce + 顶点切到 bud
       gameState.pendingScoreList.push({
         tileId,
         type: "tulip_sprout",
+        amount: 0,
+        sideEffect: "advance-tulip-to-bud",
+        silentBounce: true,
+      });
+    } else {
+      // bud：0 花蜜，silentBounce + 顶点切回 bloom
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "tulip_bud",
         amount: 0,
         sideEffect: "advance-tulip-to-bloom",
         silentBounce: true,
@@ -4472,10 +4486,18 @@ function enqueueTileCollection(tileId) {
         sideEffect: "advance-tulip-white-to-sprout",
       });
       incrementCombo(tileId);
-    } else {
+    } else if (stage === "sprout") {
       gameState.pendingScoreList.push({
         tileId,
         type: "tulip_white_sprout",
+        amount: 0,
+        sideEffect: "advance-tulip-white-to-bud",
+        silentBounce: true,
+      });
+    } else {
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "tulip_white_bud",
         amount: 0,
         sideEffect: "advance-tulip-white-to-bloom",
         silentBounce: true,

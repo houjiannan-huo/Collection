@@ -1210,10 +1210,12 @@ body.is-dragging-cursor * {
 
 .bee-counter {
   /* 已移出 .game-stage（避免被 stage 的 transform 影响位置），
-     直接锚到 viewport 左上，作为目标 HUD 左侧的"剩余蜜蜂"图标。 */
+     直接锚到 viewport 左上，作为目标 HUD 左侧的"剩余蜜蜂"图标。
+     top 取 safe-area，让蜜蜂 UI 紧贴屏幕上沿，与屏幕顶部之间没有多余空白；
+     蜜蜂 UI 在屏幕左侧，不会被 iPhone Dynamic Island 遮挡。 */
   position: fixed;
   left: max(16px, env(safe-area-inset-left, 0px));
-  top: max(8px, env(safe-area-inset-top, 0px));
+  top: env(safe-area-inset-top, 0px);
   width: 140px;
   display: flex;
   flex-direction: column;
@@ -1550,7 +1552,7 @@ body.is-dragging-cursor * {
     /* 手机端：锚到屏幕左上，作为目标 HUD 左侧的"剩余蜜蜂"图标 */
     position: fixed;
     left: max(6px, env(safe-area-inset-left, 0px));
-    top: max(4px, env(safe-area-inset-top, 0px));
+    top: env(safe-area-inset-top, 0px);
     right: auto;
     bottom: auto;
     width: 100px;
