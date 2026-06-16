@@ -150,6 +150,8 @@
 #### R2：苹果果树地块
 - 说明：未解锁地块在被解锁后，若其类型为苹果果树，则默认处于“开花阶段”
 - 采集收益：获得 3 朵花蜜
+- 状态循环（passby-20260615 修订）：`blossom → fruit → harvested → blossom`，每次玩家"经过一次"即推进一档，与回合数无关
+- 收益规则：仅 `blossom` 被经过时给 +3 花蜜；`fruit / harvested` 经过不得分但仍推进状态
 - 资源建议：底图 `tile-empty.png` + 前景 `apple_tree_blossom_01.png`
 
 #### R3：橘子果树地块
@@ -195,7 +197,7 @@
    - 类型建议：`apple_tree`
    - 前景切图：`apple_tree_blossom_01.png`
    - 状态切图：`apple_tree_blossom_01.png` / `apple_tree_fruit_01.png` / `apple_tree_harvested_01.png`
-   - 规则：未解锁时不暴露；解锁后默认处于开花阶段；在 `blossom` 状态被采集时获得 3 朵花蜜，并流转到 `fruit` 状态；随后在**下一回合开始时**自动流转到 `harvested` 状态；底图始终复用 `tile-empty.png`
+   - 规则（passby-20260615 修订）：未解锁时不暴露；解锁后默认 `blossom`；每次玩家"经过一次"即在松手成功结算瞬间推进一档，循环 `blossom → fruit → harvested → blossom`；仅 `blossom` 经过时获得 3 朵花蜜，`fruit / harvested` 经过不得分；同一轮重复经过同一棵仅推进一档；本轮撞天敌失败则被路过的苹果树不推进；底图始终复用 `tile-empty.png`
 
 3. 橘子果树地块
    - 类型建议：`orange_tree`
@@ -365,3 +367,245 @@
 - 任务 ID：`A-PLN-SETTLE-SEQUENCE-01`
 - 当前状态：规则已锁定，已交 `@B-COD` 落地
 - 下一步：`@B-COD` 实现 -> 实机回归 -> 必要时由 `@B-FIX` 微调手感参数
+
+---
+
+## 任务卡：一笔画路径轨迹（A-PLN-PATH-TRAIL-01）
+
+- 任务 ID：`A-PLN-PATH-TRAIL-01`
+- 目标：在棋盘上叠加白色一笔画轨迹，让玩家清楚看到本轮走过的路径与方向
+
+### 已确认口径
+- 主色：白色 + 半透明（柔光 + 主笔触 + 流光虚线 + 笔尖呼吸圆）
+- 形态：直线段 polyline 连接（不做曲线平滑）
+- 退场：成功结算飞币全部归集后再淡出（接 `A-PLN-SETTLE-SEQUENCE-01` 尾巴）
+- 失败：撞天敌时轨迹变红 + 与棋盘红闪同步淡出
+- 单格（仅起点未拖动）：只显示笔尖呼吸圆，不画连接线
+- SVG 层 `pointer-events: none`、位于 tile 之下，不遮挡花/树/敌人/危险数字
+
+### 实施摘要（已交 @B-COD 完成）
+- 见 `B-COD.md` 中 `B-COD-PATH-TRAIL-01`
+
+### 验收
+1. 拖动 ≥2 格：起点→当前格出现白色一笔画，流光动画 + 笔尖呼吸圆在当前格
+2. 仅按下起点未拖动：只显示笔尖呼吸圆
+3. 成功结算：飞币序列正常，轨迹保留到最后一朵归集后淡出
+4. 撞天敌：轨迹变红 + 与棋盘红闪同步消失
+5. 轨迹始终在 tile 之下
+6. `node --check app.js` 通过
+
+### Handoff
+- 当前状态：已落地，等 `@B-FIX` 实机回归
+- 下一步：浏览器人工检查上述 5 个验收点
+
+---
+
+## 任务卡：小白花两阶段（A-PLN-FLOWER-STAGES-01）
+
+- 任务 ID：`A-PLN-FLOWER-STAGES-01`
+- 目标：小白花地块新增 `bloom / sprout` 两阶段流转，模仿苹果树状态机
+
+### 已确认口径
+- 命名规范：方案 2（统一前缀 + 阶段名）
+  - `assets/tiles/flower_bloom_01.png`（开花，原 `flower_01.png` 改名）
+  - `assets/tiles/flower_sprout_01.png`（嫩芽，新增）
+- 默认初始阶段：新解锁的 flower 默认 `bloom`
+- 收益：
+  - `bloom` 被采集 → +1 花蜜（沿用旧值），触发 Combo + 小跳 + 1 朵飞花
+  - `sprout` 被采集 → +0 花蜜，不触发 Combo / 小跳 / 飞花
+- 阶段切换时机：和苹果树一致 —— 在结算动画结束（`commitPendingSideEffects`）时统一推进
+  - 被采集的 `bloom` → 结算后变 `sprout`
+  - 被采集的 `sprout` → 结算后变 `bloom`
+- 失败（撞天敌）：本轮所有 `pendingScoreList` 作废，阶段不推进
+- 同一格在同一次拖动中重复经过：沿用 `alreadyInPendingScore` 去重，不重复加分也不重复推进
+
+### 实施摘要（已交 @B-COD 完成）
+- 见 `B-COD.md` 中 `B-COD-FLOWER-STAGES-01`
+
+### 验收
+1. 新游戏开局所有 flower 都显示 `flower_bloom_01.png`
+2. 采集一朵 bloom → 飞币序列结束后该格显示 `flower_sprout_01.png`
+3. 第二轮再采集同一格 sprout → 不出飞币、不计 Combo、结算后该格回到 `flower_bloom_01.png`
+4. 撞天敌：当轮所有路过的 flower 阶段保持不变
+5. `node --check app.js` 通过
+
+---
+
+## 任务卡：结算节奏与阶段切换同步（A-PLN-SETTLE-STAGE-SYNC-01）
+
+- 任务 ID：`A-PLN-SETTLE-STAGE-SYNC-01`
+- 目标：让格子小跳与该格阶段图切换在视觉上同步，而不是所有阶段最后一次性切
+
+### 已确认口径
+- 视觉时机：A2 —— 小跳到最高点（约 `bounceDurationMs / 2 ≈ 110ms`）瞬间切换该格阶段图
+- amount=0 条目（sprout / harvested 路过）：C1 —— 在 `tick()` 跳过它们时同步即时 commit 阶段，不出小跳、不出飞花
+- sprout 不补孤立空跳，保持序列只跳"有花蜜的格"
+- harvested-only 早返回分支（不进飞币序列）保持原 `commitPendingSideEffects` 一把推进
+- 失败分支不变：`pendingScoreList = []`，阶段不推进
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-SETTLE-STAGE-SYNC-01`
+
+### 验收
+1. bloom 花：飞币离开同时该格跳到顶点变 sprout
+2. 苹果 blossom（amount=3）：跳到顶点变 fruit，剩余 2 朵飞花继续从该格飞出
+3. 拖动序列里夹一格 sprout：无跳无飞花，但视觉上仍按序列顺序变回 bloom
+4. 撞天敌：阶段保持不变
+5. 仅 harvested 路过：捷径分支正常切换
+6. `node --check app.js` 通过
+
+---
+
+## 任务卡：sprout / harvested 静默小跳（A-PLN-SPROUT-BOUNCE-01）
+
+- 任务 ID：`A-PLN-SPROUT-BOUNCE-01`
+- 目标：sprout 采集与苹果 harvested 路过时仍走"小跳 + 顶点切图"反馈，但不出飞花、不入花蜜
+
+### 已确认口径
+- 适用范围：sprout 采集（flower）、苹果 fruit 路过、苹果 harvested 路过——所有 amount=0 且引发阶段切换的条目统一标记 `silentBounce: true`
+- 视觉：跳起 → 顶点切换阶段图，节奏与 amount>0 条目一致，消耗一个 `staggerMs` 槽位
+- 不出 +0 浮字
+- 不出飞花
+- harvested-only 早返回分支：若包含 silentBounce 条目，改为走 `playRunSettlementSequence`（保留小跳节奏），否则继续走原即时 commit 捷径
+- 失败分支不变
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-SPROUT-BOUNCE-01`
+
+### 验收
+1. 拖动 = bloom A → sprout B → 苹果 blossom C：A 跳变 sprout、B 跳变 bloom（无飞花、无 +0）、C 跳变 fruit + 3 朵飞花
+2. 单独拖一条全是 sprout / harvested：全程节奏均匀小跳，每格切下一阶段，不出花蜜
+3. 撞天敌：阶段不变、不跳
+4. `node --check app.js` 通过
+
+---
+
+## 任务卡：新增郁金香地块（A-PLN-TULIP-01）
+
+- 任务 ID：`A-PLN-TULIP-01`
+- 目标：在棋盘上新增 `tulip` 类型地块，采集即 +2 花蜜
+
+### 已确认口径
+- 类型：`tulip`，前景图 `assets/tiles/tulip_01.png`，底图复用 `tile-empty.png`
+- 收益：采集 +2 花蜜，参与 Combo / 小跳 / 飞花序列（2 朵）
+- 无阶段流转（不像 flower 或 apple_tree）
+- 花蜜分桶：仅累加到 `totalHoney`，不进 `flowerHoney` 也不进 `appleHoney`（与小白花 / 苹果花的通关目标解耦）
+- 棋盘分布：`tileTypeRatioBaseCounts` 调整为 `{ enemy:3, flower:9, apple_tree:1, tulip:2, empty:4 }`，总数 19 不变（empty 9→4）
+- 起点 T18 仍不允许是 enemy；tulip 与其它 safe 类型共享 safe 候选池
+
+### 实施摘要
+- 见 `B-COD.md` `B-COD-TULIP-01`
+
+### 验收
+1. 调试开局可看到 2 个郁金香地块（资源 `tulip_01.png`）
+2. 拖动到郁金香格：小跳 + 顶点不切图（无阶段流转）+ 2 朵飞花飞向 HUD
+3. 撞天敌：郁金香 amount 作废
+4. 通关条件未改（仍需小白花 12 + 苹果花 2），郁金香花蜜仅记入 totalHoney
+5. `node --check app.js` 通过
+
+---
+
+## 任务卡：通关条件加入郁金香（A-PLN-WIN-TULIP-01）
+
+- 任务 ID：`A-PLN-WIN-TULIP-01`
+- 目标：通关条件由"小白花 12 + 苹果花 2"扩展为"小白花 12 + 苹果花 2 + 郁金香 4"
+
+### 已确认口径
+- `goalTargets = { flower: 12, apple: 2, tulip: 4 }`
+- `gameState` 新增 `tulipHoney`，结算时郁金香条目 (`entry.type === "tulip"`) 累加进 `tulipHoney`，仍同时计入 `totalHoney`
+- 胜负判定：三桶都达标才通关
+- HUD / 结束面板 / 通关面板 / game-over 状态文本统一新增 `· 郁金香 X/4`
+
+### 验收
+1. HUD 显示 `小白花 X/12 · 苹果花 Y/2 · 郁金香 Z/4`
+2. 只达成 flower+apple 但 tulip 不足：不算通关
+3. 三桶都达成：通关、win 面板含 `郁金香 X/4`
+4. 蜜蜂耗尽未通关：game-over 文案三桶齐显
+5. `node --check app.js` 通过
+
+---
+
+## 任务卡：郁金香两阶段（A-PLN-TULIP-STAGES-01）
+
+- 任务 ID：`A-PLN-TULIP-STAGES-01`
+- 目标：郁金香新增 bloom / sprout 两阶段流转，参照小白花机制
+
+### 已确认口径
+- 资源：`tulip_bloom_01.png` / `tulip_sprout_01.png`，旧 `tulip_01.png` 保留不再引用
+- 默认初始阶段：bloom
+- bloom 采集：+2 花蜜、Combo + 小跳 + 2 朵飞花、计入 `tulipHoney`，副作用 `advance-tulip-to-sprout`
+- sprout 采集：0 花蜜、不 Combo、silentBounce 小跳 + 顶点切图、副作用 `advance-tulip-to-bloom`
+- 撞天敌：pendingScoreList 作废，阶段不变
+- 通关条件不变：`flowerHoney≥12 && appleHoney≥2 && tulipHoney≥4`
+- 通关 `tulipHoney` 累计仅来自 bloom 阶段采集
+- CSS：首版 sprout 复用 bloom 位置，实机若不对再加 `.tile__image--tulip-sprout` 微调
+
+### 验收
+1. 开局所有 tulip 显示 `tulip_bloom_01.png`
+2. 采集 bloom：跳 + 顶点切 sprout 图 + 2 朵飞花，`tulipHoney += 2`
+3. 下一轮采该格 sprout：silentBounce 跳 + 顶点切回 bloom，无花蜜、无 Combo、无飞花
+4. 撞天敌：阶段不变
+5. `node --check app.js` 通过
+
+---
+
+## 任务卡：关卡体系（A-PLN-LEVEL-DESIGN-FINAL）
+
+- 任务 ID：`A-PLN-LEVEL-DESIGN-FINAL`
+- 目标：把单关游戏改造为 12 关曲线（三章 × 4 关 + 2 个 rest 关），数据驱动 + Kishōtenketsu × 过山车节奏。
+- 来源：NotebookLM 关卡设计理论（4C / Kishōtenketsu / 过山车曲线 / 显隐性变量 / "压力下学不会" / "估 8 实际 24"）+ 当前代码现状。
+
+### 已锁口径
+- Q1 = A：apple blossom `amount = 1`
+- Q2 = A：盘面按关伸缩，`layoutRows / rowTileIds / rowSlots / startTileId` 降级为关字段
+- Q3 = A：撞鸟惩罚保持现状（pendingScoreList 清空、蜜蜂 -1、阶段不回退）
+- 关卡数：12 关；rest 关插入 L5 / L9（不在 L12 后再加 L13）
+- LV-2：必做（BFS 排除）
+- intro toast 时机：关卡载入即弹（沿用 `showToast`）
+- NotebookLM：不再追问
+
+### 12 关曲线（v3：前 3 关 mini 盘 + L1 零敌人 + 每关只引入一个新东西）
+| 关 | 章 | Kishō | 节奏 | 唯一新东西 | 盘面 | 蜜蜂 | enemy/flower/apple/tulip/empty | 目标 F/A/T | enemy 密度 | enemyPlacementRule |
+|---|---|---|---|---|---|---|---|---|---|---|
+| L1 | 1 | Introduce | valley | 学拖动 | **7** | 6 | 0/5/0/0/2 | 4/0/0 | 0% | default |
+| L2 | 1 | Train | valley→rise | 首次见鸟 | **9** | 6 | 1/6/0/0/2 | 4/0/0 | 11.1% | exclude-shortest-safe-path |
+| L3 | 1 | Twist | rise | 苹果树三态 | **11** | 6 | 1/7/1/0/2 | 5/1/0 | 9.1% | exclude-shortest-safe-path |
+| L4 | 1 | Conclude | peak | 第 1 章综合 | 16 | 6 | 3/9/2/0/2 | 10/1/0 | 18.8% | default |
+| L5 | rest | Rest | rest | 回血关 | 13 | 8 | 0/10/0/0/3 | 6/0/0 | 0% | default |
+| L6 | 2 | Introduce | valley | 郁金香 +2 | 16 | 7 | 1/10/0/2/3 | 8/0/2 | 6.3% | exclude-shortest-safe-path |
+| L7 | 2 | Train | rise | 19 格大盘 + 郁金香田 | 19 | 6 | 2/10/0/4/3 | 10/0/3 | 10.5% | default |
+| L8 | 2 | Twist+Conclude | rise→peak | 三花同台 | 19 | 5 | 3/9/2/3/2 | 11/1/3 | 15.8% | default |
+| L9 | rest | Rest | rest | 郁金香 × 回血 | 16 | 8 | 0/7/0/6/3 | 5/0/4 | 0% | default |
+| L10 | 3 | Introduce | valley→rise | 22 格大盘 | 22 | 7 | 3/11/1/3/4 | 11/1/3 | 13.6% | exclude-shortest-safe-path |
+| L11 | 3 | Train+Twist | rise→peak | 苹果翻倍 + 鸟群加密 | 22 | 6 | 4/10/2/3/3 | 12/2/4 | 18.2% | default |
+| L12 | 3 | Conclude | valley→peak | 心流打破 · 远端聚集 | 22 | 5 | 5/10/2/3/2 | 14/2/5 | 22.7% | far-from-start-then-cluster |
+
+设计原则（v2 校准）：
+1. **每关有且只有一个 "新东西"**（4C Hooks 强约束）：拖动 → 鸟 → 苹果 → 综合 → 回血 → 郁金香 → 大盘 → 三花 → 回血 → 22 格 → 翻倍 → 终局。
+2. **L1 零敌人**：移除"学撞鸟"放到 L2，让 L1 唯一焦点是"按住—拖动—松手"的运动学习。
+3. **敌人阶梯渐入**：每章鸟数从 0 / 1 / 2 / 3 起步，章节切换时回零（L5、L9），避免线性堆叠造成疲劳。
+4. **教学关全部走 `exclude-shortest-safe-path`**：L2 / L3 / L6 / L10 起点周边 2 步内绝无敌人。
+5. **rest 关蜜蜂回满（8）+ 0 敌人**：彻底"送爽"，对应宪法第 3 条波谷。
+
+### 落地实现摘要（已完成）
+- LV-1 `app.js`：顶层常量降级为 `let`，新增 `levelConfigs[]`、`currentLevelIndex`、`applyLevelConfig(idx)`；4 套盘面拓扑 `LAYOUT_13/16/19/22`（13/16/22 经 BFS 验证起点至少 3 邻居、所有 tile 从 start 可达）
+- LV-2 新增 `bfsDistancesFromStart()` + `pickEnemyTileIds()`，支持 `default` / `exclude-shortest-safe-path`（SAFE_RADIUS=2）/ `far-from-start-then-cluster`
+- LV-3 新增 `showLevelIntroToast()`，沿用 `showToast` 链路，在 `restartGame` 末尾触发
+- LV-4 `dom.restartWinButton` 文案随关切换；末关 → "再来一遍"、非末关 → "下一关"；handler 区分 game-over（本关）vs win（下一关）
+- LV-5 通关/失败时 `logEvent("level-result", {...})`
+- LV-6 自检脚本：12 关全部 reachable === tiles.length、起点邻居 ≥ 3、起点非 enemy、L1/L2/L5/L9 enemy 不在 SAFE_RADIUS 内；L12 enemy 平均距离 ≥ 4.4
+
+### Debug 入口
+- `window.demoBoard.levelConfigs` 查看全部关卡
+- `window.demoBoard.currentLevel` 当前关
+- `window.demoBoard.gotoLevel(idx)` 强切关（0~11）
+
+### 已知边界
+- 关卡未做 localStorage 持久化，刷新即回 L1（本轮范围外）
+- L12 "前 3 步无敌人" 的剧本化心流打破：当前仅用"远端聚集"实现，不动态等"第 4 步触发"
+- 蜜蜂/橘子树等新地块未接入
+- 上线后需用 `logEvent("level-result")` 数据校准 `designerNotes.expectedRunsToWin`，对应 notebook 第 6 条"估 8 实际 24"
+
+### Handoff
+- 当前状态：已落地，等 `@B-FIX` 实机回归
+- 下一步：浏览器人工跑 L1 → L12，确认 intro toast、盘面伸缩、win 面板"下一关"按钮、撞鸟反馈、tile 拓扑显示正常

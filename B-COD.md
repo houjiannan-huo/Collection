@@ -1,7 +1,21 @@
 # B-COD 记录
 
 ## Claim
-- 任务 ID：B-COD-SETTLE-SEQUENCE-01
+- 任务 ID：B-COD-APPLE-PASSBY-01
+- 当前 claim：模块《苹果树"一次经过即推进"机制改造》
+- 范围：
+  - 苹果树状态推进改为完全由"玩家经过"驱动，每次成功结算瞬间推进一档
+  - 循环规则：`blossom → fruit → harvested → blossom`
+  - `extendRun()` 中三态分支重写：blossom +3 + `advance-to-fruit`；fruit +0 + `advance-to-harvested`；harvested +0 + `advance-to-blossom`
+  - `commitPendingSideEffects()` 改为直推 `growthStage`，不再使用 `pendingFruit / pendingReBloom / fruitRoundCount`
+  - `advanceAppleTreeStatesForNextRound()` 退役为空壳（保留函数签名以兼容旧调用点）
+  - `getAppleTreeStageCountdown()` 统一返回 `null`，不再显示三态倒计时角标
+  - 撞天敌失败仍走"作废 pending"，被路过的苹果树不推进
+  - 同轮重复经过同一棵苹果树：`alreadyInPendingScore` 去重，仅推进一档
+  - `index.html` 资源版本号升级为 `apple-passby-20260615-1`
+- 历史 claim 已闭环：`B-COD-SETTLE-SEQUENCE-01`（结算延迟 + 飞币序列）
+
+## 旧 claim：B-COD-SETTLE-SEQUENCE-01
 - 当前 claim：模块《结算延迟到松手 + 飞币归集序列》
 - 范围：
   - 拖动期"只记账不入账"：`pendingScoreList` 收集 flower / apple_tree blossom / apple_tree harvested 三类条目
@@ -365,3 +379,232 @@
 - 本模块 M1 已可交给 `B-FIX` 做视觉回归，重点检查：花层居中、透明边、翻牌前后、路径高亮 / 起点 / 失败状态是否遮挡前景花层
 - 默认可交给 `B-FIX` 做浏览器实机回归：Combo 浮层跟随最新采花格、强化档视觉、2.5 秒结束渐隐、音效节流，以及与飞花 / 自定义光标 / BGM 的并存观感
 - 本模块完成后建议回流 `@A-PLN` 做阶段收口；若先做人眼验收，也可先交 `A-ASK` / 用户按上方步骤检查，再决定是否补第二轮爽感优化
+
+---
+
+## 任务卡：一笔画路径轨迹（B-COD-PATH-TRAIL-01）
+
+- 任务 ID：`B-COD-PATH-TRAIL-01`
+- 目标：在棋盘上叠加 SVG 白色一笔画轨迹，让玩家清楚看到本轮路径
+
+### 已实施改动
+- `app.js`
+  - `gameState` 新增 `trailPath / trailFading / trailFail` 三个视觉态字段
+  - `beginRun` 写入 `trailPath = [tileId]`，并清掉 fading/fail
+  - `extendRun` 每次 push 后同步 `trailPath = [...currentPath]`
+  - 新增 `scheduleTrailFadeOut(delayMs)`：先打 `--fading` 等过渡 260ms 再清空轨迹
+  - `completeRun` 失败分支：保留 `trailPath = [...path]`，立刻打 `--fail` + `--fading`，跟随 failFlash 一起淡出
+  - `completeRun` 三个成功分支（纯路过 / 仅 harvested / 进入飞币序列）：都在合适时机调用 `scheduleTrailFadeOut(0)`；飞币序列分支在 `playRunSettlementSequence` 的 `onComplete` 里调用，确保飞币全部归集后才开始淡出
+  - 新增 `renderBoardTrail()`，在 `renderBoard()` 末尾调用；用 `boardMetrics + tilesById` 计算节点中心，复用同一个 `<svg class="board__trail">` 节点，DOM 顺序保证 tile 始终覆盖在轨迹之上
+- `style.css`
+  - 新增 `.board__trail`、`.board__trail-glow`、`.board__trail-stroke`、`.board__trail-flow`、`.board__trail-head`
+  - `--fading` 控制 opacity 过渡；`--fail` 把所有笔触换成红色系
+  - `--single`（路径只有 1 格）时隐藏线条只保留笔尖呼吸圆
+  - 新增 `@keyframes board-trail-flow`（流光虚线）与 `@keyframes board-trail-head-pulse`（笔尖呼吸）
+- `animationDurations` 新增 `trailFade: 260`
+
+### 自检
+- `node --check app.js` 已通过
+- 待 `@B-FIX` 实机回归：路径连续性、笔尖位置、撞天敌染红、飞币归集后淡出时机、SVG 不遮挡花/树/敌人/危险数字
+
+---
+
+## 任务卡：小白花两阶段（B-COD-FLOWER-STAGES-01）
+
+- 任务 ID：`B-COD-FLOWER-STAGES-01`
+- 目标：实现 flower 地块 bloom / sprout 两阶段流转
+
+### 已实施改动
+- `app.js`
+  - 删除常量 `flowerOverlayAsset`，改为 `flowerStageAssetMap = { bloom, sprout }`
+  - `getInitialGrowthStage("flower")` 返回 `"bloom"`，让新解锁 flower 自带阶段
+  - 新增 `getFlowerStage(tileState)`，做 fallback 到 `bloom`
+  - `getSafeTileOverlayMarkup` 中 flower 分支按 stage 取图，并附加 `tile__image--flower-bloom / -sprout` 钩子类
+  - `extendRun` flower 分支按 stage 分流：
+    - `bloom`：`amount=1`，`sideEffect="advance-flower-to-sprout"`，照旧 `incrementCombo`
+    - `sprout`：`amount=0`，`sideEffect="advance-flower-to-bloom"`，不触发 Combo
+  - `commitPendingSideEffects` 新增两条分支：`advance-flower-to-sprout` / `advance-flower-to-bloom`
+  - 阶段推进时机沿用现有链路：飞币序列收尾 → `finalizeSuccessRun` → `commitPendingSideEffects`；harvested-only 分支也已调用 `commitPendingSideEffects`，sprout 0 花蜜路径会落到这里
+  - `playRunSettlementSequence` 中 `amount === 0` 条目自动跳过小跳与飞花，sprout 行为不需要额外改
+
+### 自检
+- `node --check app.js` 已通过
+- 待 `@B-FIX` 实机回归：bloom→sprout 切换时机、sprout 再被采集回 bloom、撞天敌阶段保持、同 drag 重复经过去重
+
+---
+
+## 任务卡：结算节奏与阶段切换同步（B-COD-SETTLE-STAGE-SYNC-01）
+
+- 任务 ID：`B-COD-SETTLE-STAGE-SYNC-01`
+- 目标：把阶段切换从"结算尾段一把 commit"改为"跟随每格小跳同步 commit"
+
+### 已实施改动
+- `app.js`
+  - 抽出 `commitOneSideEffect(entry, { render })`，原 `commitPendingSideEffects` 改为对每条 entry 调用前者
+  - `playRunSettlementSequence.tick()`：
+    - 跳过 amount=0 条目时，对每条调用 `commitOneSideEffect(..., { render: true })`，按序列顺序即时推进
+    - 对 amount>0 的当前条目：`triggerScoreBounce` 同时 `scheduleCollectionTask(commitOneSideEffect, bounceDurationMs/2)`，在小跳顶点切换阶段图
+  - `finalizeSuccessRun`：去掉 `commitPendingSideEffects(pendingList)`，避免重复 commit
+  - harvested-only 早返回分支（`completeRun` 内 `totalAmount === 0 && hasAnyEntries`）保持原 `commitPendingSideEffects` 不变
+
+### 自检
+- `node --check app.js` 已通过
+- 待 `@B-FIX` 实机回归：
+  - 苹果 blossom（amount=3）跳到顶点 fruit 图替换瞬间，剩余飞花仍从该格飞出
+  - bloom→sprout 时机与小跳顶点是否对齐
+  - sprout 夹在中间时序无空帧
+  - 撞天敌阶段保持
+
+---
+
+## 任务卡：sprout / harvested 静默小跳（B-COD-SPROUT-BOUNCE-01）
+
+- 任务 ID：`B-COD-SPROUT-BOUNCE-01`
+- 目标：amount=0 且引发阶段切换的条目也走小跳 + 顶点切图
+
+### 已实施改动
+- `app.js` extendRun：sprout、苹果 fruit、苹果 harvested 三种 amount=0 条目入栈时新增 `silentBounce: true`
+- `app.js` playRunSettlementSequence.tick()：
+  - 即时 commit 通道改为只接受 `amount === 0 && !silentBounce` 条目
+  - 主循环对当前条目无条件 `triggerScoreBounce` + 顶点 commit；amount>0 才出 `+N` 浮字与飞花
+- `app.js` completeRun：harvested-only 早返回分支增加 `hasSilentBounce` 判定，存在 silentBounce 时改走 `playRunSettlementSequence`，保留小跳节奏
+
+### 自检
+- `node --check app.js` 通过
+- 待 `@B-FIX` 实机回归：sprout 单跳无飞花、harvested 单跳无飞花、bloom/sprout/苹果混跳节奏均匀
+
+---
+
+## 任务卡：新增郁金香地块（B-COD-TULIP-01）
+
+- 任务 ID：`B-COD-TULIP-01`
+- 目标：让 `tulip` 类型作为新地块完整融入现有玩法
+
+### 已实施改动
+- `app.js`
+  - `tileTypeRatioBaseCounts`：新增 `tulip:2`、`empty:6→4`
+  - `tileTypeOrder`：扩展为 `[enemy, flower, apple_tree, tulip, empty]`
+  - `createTileTypeSummary` 包含 `tulip:0`
+  - `tileAssetMap.tulip = tile-empty.png`；新增 `tulipOverlayAsset = "./assets/tiles/tulip_01.png"`
+  - `assignRandomTileTypes`：在 apple_tree 后、flower 前抽取 `tulip` 候选池
+  - `validateTypeMap`：加入 `summary.tulip` 校验
+  - `isSafeTileType` 包含 `tulip`
+  - `getTileTypeLabel("tulip") = "郁金香"`
+  - `getSafeTileOverlayMarkup` 新增 tulip 分支
+  - `extendRun` 新增 tulip 分支：amount=2、sideEffect=null、`incrementCombo`
+- `style.css`：新增 `.tile__image--tulip`（复用 flower 的位置规则）
+
+### 自检
+- `node --check app.js` 通过
+- 待 `@B-FIX` 实机回归：分布数量正确、郁金香前景居中、小跳 + 飞花 2 朵、撞天敌作废、Combo 计入
+
+---
+
+## 任务卡：通关条件加入郁金香（B-COD-WIN-TULIP-01）
+
+- 任务 ID：`B-COD-WIN-TULIP-01`
+
+### 已实施改动
+- `app.js`
+  - `goalTargets` 新增 `tulip: 4`；`honeyGoalTarget` 同步累加
+  - `createInitialGameState` 返回的 state 新增 `tulipHoney: 0`
+  - `finalizeSuccessRun`：新增 `gainedTulip` 累计与 `tulipHoney` 入账；通关条件三桶都达标；通关 statusText 含郁金香
+  - HUD 文本：`renderHud` 主 HUD / gameOverSummary / gameWinSummary 全部加 `· 郁金香 X/4`
+  - 三处 `游戏结束 · 小白花...` 文本统一补 `· 郁金香 X/4`
+
+### 自检
+- `node --check app.js` 通过
+
+## 模块：目标 HUD 改为 icon + 数字
+- 任务 ID：`B-COD-HUD-GOAL-ICON-01`
+- 目标：HUD"目标"卡片由一行文字改为参考图风格的 3 槽 icon + 当前值
+
+### 已实施改动
+- `index.html`
+  - 替换原 `hud-card--primary` 内容：删 `hud-label`/`#total-honey`，改为 `#goal-card` 内 3 个 `.goal-item`（flower / apple / tulip），每个含 `.goal-item__icon` + `.goal-item__num`
+  - icon 资源：`assets/ui/icon_flower_01.png`、`icon_apple_01.png`（苹果花）、`icon_tulip_01.png`
+  - 卡片 `aria-label` 包含完整"已得/目标"文案
+  - 样式版本号 bump：`style.css?v=goal-icon-20260615-1`
+- `style.css`
+  - 新增 `.hud-card--goals`（横排、gap 14、padding 10/18、width auto）
+  - 新增 `.goal-item` / `.goal-item__icon`（28x28）/ `.goal-item__num`（18px 700）
+  - `.goal-item.is-done .goal-item__num { color: #2f8a3e }` 达成态高亮
+  - 窄屏断点：icon 22x22、字号 14px、gap 10、padding 7/12
+- `app.js`
+  - `dom` 新增 `goalCard / goalFlower / goalApple / goalTulip`
+  - 新增 `renderGoalHUD()`：同步三槽数字、刷新 `aria-label`、按 `goalTargets` 比对切换 `is-done`
+  - `renderHud()` 删除 `dom.totalHoney.textContent` 拼接，改为 `renderGoalHUD()`
+  - HUD pulse 改为作用在 `dom.goalCard`
+
+### 范围说明
+- `Collection/` 子目录是历史拷贝，本次未同步修改
+
+### 自检
+- `node --check app.js` 通过
+
+---
+
+## 任务卡：郁金香两阶段（B-COD-TULIP-STAGES-01）
+
+- 任务 ID：`B-COD-TULIP-STAGES-01`
+
+### 已实施改动
+- `app.js`
+  - 删除常量 `tulipOverlayAsset`，改为 `tulipStageAssetMap = { bloom, sprout }`
+  - `getInitialGrowthStage("tulip")` 返回 `"bloom"`
+  - 新增 `getTulipStage(tileState)`，做 fallback 到 bloom
+  - `getSafeTileOverlayMarkup`：tulip 分支按 stage 取图，并附加 `tile__image--tulip-bloom / -sprout` 钩子类
+  - `extendRun`：tulip 分支按 stage 分流
+    - bloom：`amount=2`、`sideEffect=advance-tulip-to-sprout`、`incrementCombo`
+    - sprout：`amount=0`、`sideEffect=advance-tulip-to-bloom`、`silentBounce=true`、不 Combo
+  - `commitOneSideEffect`：新增 `advance-tulip-to-sprout` / `advance-tulip-to-bloom` 两条分支
+  - finalizeSuccessRun 的 `gainedTulip` 自然仅累加 `entry.type === "tulip"`（bloom 走这条），sprout 入 `tulip_sprout`，不计入 `tulipHoney`
+
+### 自检
+- `node --check app.js` 通过
+
+---
+
+## 模块：飞花直达目标 icon + 移除"本轮暂存"
+- 任务 ID：`B-COD-HUD-GOAL-COLLECT-01`
+- 目标：删除"本轮暂存"卡片，让飞花飞行终点按 tile 类型路由到对应目标 icon；落地即提交分项花蜜并播放 icon 弹跳 + burst
+
+### 已实施改动
+- `index.html`
+  - 删除 `#round-honey-card` 整段
+  - 每个 `.goal-item` 新增 `<span class="goal-item__burst" aria-hidden="true">` 用于到达爆点
+  - 样式版本 bump 为 `style.css?v=goal-arrival-20260615-1`
+- `style.css`
+  - 删除 `.hud-card--secondary`、`.hud-card--secondary.hud-card--collect`、`.hud-roll*`、`.hud-collect-burst`、`.hud-card--primary strong`、`.hud-card--primary.hud-card--pulse strong` 及窄屏断点对应规则
+  - 删除 `@keyframes hud-roll-up / hud-collect-bounce / hud-collect-burst / honey-pulse`
+  - 新增 `.goal-item__icon` 默认 transform-origin / transition
+  - 新增 `.goal-item.is-collecting .goal-item__icon` 播 `goal-collect-bounce`
+  - 新增 `.goal-item__burst` 与 `.goal-item.is-collecting .goal-item__burst` 播 `goal-collect-burst`
+  - 新增 `@keyframes goal-collect-bounce`（峰值 1.5）与 `goal-collect-burst`
+- `app.js`
+  - 状态裁剪：删除 `gameState.roundHoney / currentRunHoney / totalHoneyPulse`、`feedbackState.hudDisplayedValue / hudTargetValue / isHudRolling / hudRollingFrom / hudRollingTo / shouldResetRoundHoney`、`collectFeedbackConfig.hudRollDuration / hudResetDelay`
+  - dom 裁剪：删除 `dom.totalHoney / roundHoney / roundHoneyCard`
+  - 函数裁剪：删除 `syncRoundHoney / renderRoundHoneyValue / runNextHudIncrement / enqueueTempHoneyIncrement / maybeResetRoundHoneyAfterArrival / playHudCollectFeedback / getHudCollectTargetPoint / animateFlowerToHud`
+  - 新增 `commitGoalArrival(type)`：按类型 `flowerHoney/appleHoney/tulipHoney += 1`，并令 `gameState.totalHoney = 三桶之和`，最后 `renderGoalHUD()`
+  - 新增 `getGoalIconElement(type) / getGoalIconTargetPoint(type)`：按 type 选 `#goal-flower / #goal-apple / #goal-tulip` 父节点取到达坐标
+  - 新增 `playGoalCollectFeedback(type)`：对应 `.goal-item` 加 `is-collecting`，360ms 移除
+  - `animateFlowerToGoal(start, runToken, type)` 替换 `animateFlowerToHud`，并把 `type` 写入 flight 元数据
+  - `spawnFlowerFlyEffect(tileId, type)` 增加 type 参数；保底分支直接 `commitGoalArrival(type)`
+  - `finishFlowerFlight` 改为：`commitGoalArrival(flight.type) + playGoalCollectFeedback(flight.type) + playCollectSound()`
+  - `finalizeSuccessRun` 不再 bulk add 三桶与 totalHoney；保留 gainedHoney 用于 statusText / logEvent
+  - 调用点 `spawnFlowerFlyEffect(item.tileId, item.type)`
+  - `queueRoundHoneyReset` 保留为兼容空壳
+  - `resetCollectionFeedback` 移除 resetDisplay 参数，转为清理任何 `.goal-item.is-collecting`
+  - `triggerSuccessFeedback` 删除 `totalHoneyPulse` 相关代码
+  - debug snapshot 同步清理（去掉 hudDisplayedValue / hudTargetValue / isHudRolling / shouldResetRoundHoney）
+
+### 规则与时序
+- 每朵飞花落地都即时 -1 对应目标剩余数（视觉与逻辑 1:1）
+- 三桶花蜜由 commit 在每次落地时累加；通关检查仍在 finalizeSuccessRun（已在所有飞行结束后）
+- 失败路径不进入 settlement 序列，无 flight 触发，自然不会提交
+
+### 范围说明
+- `Collection/` 子目录是历史拷贝，本次未同步修改
+
+### 自检
+- `node --check app.js` 通过
