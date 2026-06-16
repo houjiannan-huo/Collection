@@ -436,6 +436,19 @@ const boardMetrics = {
   yUnit: 110,
 };
 const boardDisplayScale = 1.7;
+const pathFusionConfig = {
+  filterId: "path-fusion-gooey",
+  blurStdDeviation: 7,
+  alphaMultiplier: 18,
+  alphaOffset: -7,
+  ringWidthPx: 116,
+  ringHeightPx: 128,
+  activeRingScale: 1.08,
+  connectorWidthPx: 34,
+  connectorInsetPx: 40,
+  color: "#fffdf5",
+  failColor: "#ffbeb7",
+};
 
 // 全局棋盘基准：取最大关卡 LAYOUT_22 的尺寸，所有关卡共用同一 scale，
 // 保证手机上每关的 tile 视觉大小一致（小关会有更多留白，这是预期取舍）。
@@ -951,6 +964,8 @@ function createInitialGameState(options = {}) {
     trailPath: [],
     trailFading: false,
     trailFail: false,
+    pathConnectorAnimationStarts: {},
+    pathEndAnimationStarts: {},
     invalidFlashTileIds: [],
     shakeTileIds: [],
     flipTileIds: [],
@@ -1161,7 +1176,15 @@ function showToast(message, tone = "") {
   }, animationDurations.toast);
 }
 
-function triggerStartPulse(tileId) {
+function triggerStartPulse(tileId, options = {}) {
+  // mode === "begin"：起手反馈交给 tile--path-end 的放大承担，不再叠 ring pulse + inner bounce
+  // mode === "settle"（默认）：结算成功反馈仍保留原有 tile--start-pulse 动画
+  const { mode = "settle" } = options;
+
+  if (mode === "begin") {
+    return;
+  }
+
   gameState.startPulseTileId = tileId;
 
   scheduleFeedback(() => {
@@ -1557,6 +1580,12 @@ function resetCollectionFeedback(options = {}) {
 
   if (clearFlights) {
     clearActiveFlowerFlights();
+    // 清掉可能残留的结算巡飞蜜蜂（例如玩家在结算未完成时触发了下一轮 / 重置）
+    if (dom?.fxOverlay) {
+      dom.fxOverlay.querySelectorAll(".settlement-bee").forEach((el) => el.remove());
+    }
+    // 同步恢复 HUD 蜜蜂可见，避免因中断导致 HUD 蜜蜂一直隐藏
+    dom?.beeCounterIcon?.classList.remove("bee-counter__icon--away");
   }
 
   if (dom?.goalCard) {
@@ -2458,15 +2487,86 @@ function buildTileAppearanceFrameMap(visibleTileIds) {
   return frameMap;
 }
 
+function getBoardPixelSize() {
+  const maxSlot = Math.max(...tiles.map((tile) => tile.slotX));
+  const maxRow = Math.max(...tiles.map((tile) => tile.row));
+  return {
+    width: boardMetrics.leftPadding * 2 + maxSlot * boardMetrics.xUnit + 56,
+    height: boardMetrics.topPadding * 2 + maxRow * boardMetrics.yUnit + 96,
+  };
+}
+
+function getTileBoardCenter(tileId) {
+  const tile = tilesById[tileId];
+
+  if (!tile) {
+    return null;
+  }
+
+  return {
+    x: boardMetrics.leftPadding + tile.slotX * boardMetrics.xUnit,
+    y: boardMetrics.topPadding + tile.row * boardMetrics.yUnit,
+  };
+}
+
+function getVisibleTrailPath() {
+  if (gameState.currentPath.length > 0) {
+    return gameState.currentPath;
+  }
+
+  return gameState.trailPath || [];
+}
+
+function getTrailVisualPalette(pathLength, isFail = false) {
+  if (isFail) {
+    return {
+      ring: "#ffbeb7",
+      edge: "#ff5f58",
+      glow: "rgba(255, 95, 88, 0.72)",
+      trail: "#ff6961",
+      flow: "rgba(255, 220, 216, 0.96)",
+      head: "#ff6e66",
+    };
+  }
+
+  if (pathLength >= 9) {
+    return {
+      ring: "#d8eeff",
+      edge: "#58a8ff",
+      glow: "rgba(88, 168, 255, 0.62)",
+      trail: "#6ab3ff",
+      flow: "rgba(228, 243, 255, 0.98)",
+      head: "#8bc4ff",
+    };
+  }
+
+  if (pathLength >= 5) {
+    return {
+      ring: "#dfffc0",
+      edge: "#52cf70",
+      glow: "rgba(82, 207, 112, 0.62)",
+      trail: "#67dc82",
+      flow: "rgba(231, 255, 214, 0.98)",
+      head: "#8ef19f",
+    };
+  }
+
+  return {
+    ring: "#fffdf5",
+    edge: "#fff1d7",
+    glow: "rgba(255, 249, 228, 0.68)",
+    trail: "#fff8ea",
+    flow: "rgba(255, 255, 255, 0.98)",
+    head: "#ffffff",
+  };
+}
+
 function computeBoardSize() {
   if (!dom?.board) {
     return;
   }
 
-  const maxSlot = Math.max(...tiles.map((tile) => tile.slotX));
-  const maxRow = Math.max(...tiles.map((tile) => tile.row));
-  const width = boardMetrics.leftPadding * 2 + maxSlot * boardMetrics.xUnit + 56;
-  const height = boardMetrics.topPadding * 2 + maxRow * boardMetrics.yUnit + 96;
+  const { width, height } = getBoardPixelSize();
 
   // 方案 A：所有关卡共用 LAYOUT_22 的参考尺寸作为 board-viewport，
   // 小关给 board 加等量 margin-top，让 tile 全部出现完成后整体上下居中。
@@ -2603,6 +2703,18 @@ function getTileVisualType(tileState) {
 
 function getTileAsset(tileState) {
   return tileAssetMap[getTileVisualType(tileState)] ?? tileAssetMap.hidden;
+}
+
+function getTileRingMaskAsset(tileState, fallbackAsset) {
+  if (tileState?.revealed && isSafeTileType(tileState.type)) {
+    return tileAssetMap.empty;
+  }
+
+  if (tileState?.revealed && tileState.type === "enemy") {
+    return tileAssetMap.enemy;
+  }
+
+  return fallbackAsset;
 }
 
 function getSafeTileOverlayMarkup(tileState) {
@@ -2848,6 +2960,225 @@ function getThreatEdgeDirections(tileState) {
     .filter(Boolean);
 }
 
+function getPathConnectorKey(leftTileId, rightTileId) {
+  return [leftTileId, rightTileId].sort().join("::");
+}
+
+function markFreshPathConnector(leftTileId, rightTileId) {
+  const connectorKey = getPathConnectorKey(leftTileId, rightTileId);
+  const startedAt = getNow();
+
+  gameState.pathConnectorAnimationStarts = {
+    ...gameState.pathConnectorAnimationStarts,
+    [connectorKey]: startedAt,
+  };
+
+  scheduleFeedback(() => {
+    if (gameState.pathConnectorAnimationStarts[connectorKey] !== startedAt) {
+      return;
+    }
+
+    const nextAnimationStarts = { ...gameState.pathConnectorAnimationStarts };
+    delete nextAnimationStarts[connectorKey];
+    gameState.pathConnectorAnimationStarts = nextAnimationStarts;
+    triggerRenderOnly();
+  }, 420);
+
+  return connectorKey;
+}
+
+function markFreshPathEnd(tileId) {
+  const startedAt = getNow();
+
+  gameState.pathEndAnimationStarts = {
+    ...gameState.pathEndAnimationStarts,
+    [tileId]: startedAt,
+  };
+
+  scheduleFeedback(() => {
+    if (gameState.pathEndAnimationStarts[tileId] !== startedAt) {
+      return;
+    }
+
+    const nextAnimationStarts = { ...gameState.pathEndAnimationStarts };
+    delete nextAnimationStarts[tileId];
+    gameState.pathEndAnimationStarts = nextAnimationStarts;
+    triggerRenderOnly();
+  }, 260);
+}
+
+function createPathFusionFilterMarkup() {
+  const matrixValues = [
+    "1 0 0 0 0",
+    "0 1 0 0 0",
+    "0 0 1 0 0",
+    `0 0 0 ${pathFusionConfig.alphaMultiplier} ${pathFusionConfig.alphaOffset}`,
+  ].join(" ");
+
+  return `
+    <svg class="board__path-fusion-filter-svg" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="${pathFusionConfig.filterId}" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="${pathFusionConfig.blurStdDeviation}" result="blur" />
+          <feColorMatrix in="blur" mode="matrix" values="${matrixValues}" result="goo" />
+        </filter>
+      </defs>
+    </svg>
+  `;
+}
+
+function createBoardPathFusionLayer(visibleTrailPath = [], trailPalette = null) {
+  const layer = document.createElement("span");
+  layer.className = [
+    "board__path-fusion",
+    gameState.trailFading && gameState.currentPath.length === 0 ? "board__path-fusion--fading" : "",
+    gameState.trailFail ? "board__path-fusion--fail" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  layer.setAttribute("aria-hidden", "true");
+
+  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  const fusionColor = gameState.trailFail ? pathFusionConfig.failColor : pathFusionConfig.color;
+  layer.style.setProperty("--path-fusion-color", fusionColor || palette.ring);
+  layer.style.setProperty("--path-fusion-ring-width", `${pathFusionConfig.ringWidthPx}px`);
+  layer.style.setProperty("--path-fusion-ring-height", `${pathFusionConfig.ringHeightPx}px`);
+  layer.style.setProperty("--path-fusion-connector-width", `${pathFusionConfig.connectorWidthPx}px`);
+  layer.style.setProperty("--path-fusion-active-scale", String(pathFusionConfig.activeRingScale));
+
+  const shapes = document.createElement("span");
+  shapes.className = "board__path-fusion-shapes";
+
+  visibleTrailPath.forEach((tileId, index) => {
+    const center = getTileBoardCenter(tileId);
+    if (!center) {
+      return;
+    }
+
+    const ring = document.createElement("span");
+    ring.className = [
+      "path-fusion-ring",
+      index === visibleTrailPath.length - 1 ? "path-fusion-ring--active" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    ring.style.left = `${center.x}px`;
+    ring.style.top = `${center.y}px`;
+    shapes.appendChild(ring);
+  });
+
+  for (let index = 1; index < visibleTrailPath.length; index += 1) {
+    const fromCenter = getTileBoardCenter(visibleTrailPath[index - 1]);
+    const toCenter = getTileBoardCenter(visibleTrailPath[index]);
+
+    if (!fromCenter || !toCenter) {
+      continue;
+    }
+
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= 0) {
+      continue;
+    }
+
+    const inset = Math.min(pathFusionConfig.connectorInsetPx, distance * 0.42);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const startX = fromCenter.x + unitX * inset;
+    const startY = fromCenter.y + unitY * inset;
+    const connectorLength = Math.max(0, distance - inset * 2);
+
+    if (connectorLength <= 0) {
+      continue;
+    }
+
+    const connector = document.createElement("span");
+    connector.className = "path-fusion-connector";
+    connector.style.left = `${startX}px`;
+    connector.style.top = `${startY}px`;
+    connector.style.width = `${connectorLength}px`;
+    connector.style.setProperty("--path-fusion-connector-angle", `${Math.atan2(dy, dx)}rad`);
+    shapes.appendChild(connector);
+  }
+
+  layer.innerHTML = createPathFusionFilterMarkup();
+  layer.appendChild(shapes);
+  return layer;
+}
+
+function createBoardPathConnectorLayer(visibleTrailPath = [], trailPalette = null) {
+  const layer = document.createElement("span");
+  layer.className = [
+    "board__path-connectors",
+    gameState.trailFading && gameState.currentPath.length === 0 ? "board__path-connectors--fading" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  layer.setAttribute("aria-hidden", "true");
+
+  if (visibleTrailPath.length < 2) {
+    return layer;
+  }
+
+  const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  layer.style.setProperty("--path-connector-color", palette.ring);
+
+  for (let index = 1; index < visibleTrailPath.length; index += 1) {
+    const fromTileId = visibleTrailPath[index - 1];
+    const toTileId = visibleTrailPath[index];
+    const fromCenter = getTileBoardCenter(fromTileId);
+    const toCenter = getTileBoardCenter(toTileId);
+
+    if (!fromCenter || !toCenter) {
+      continue;
+    }
+
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance <= 0) {
+      continue;
+    }
+
+    const connectorInset = 40;
+    const connectorLength = Math.max(28, distance - connectorInset * 2);
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const startX = fromCenter.x + unitX * connectorInset;
+    const startY = fromCenter.y + unitY * connectorInset;
+    const connectorKey = getPathConnectorKey(fromTileId, toTileId);
+    const isFresh = typeof gameState.pathConnectorAnimationStarts[connectorKey] === "number";
+    const freshElapsedMs = isFresh
+      ? Math.max(0, getNow() - gameState.pathConnectorAnimationStarts[connectorKey])
+      : 0;
+    const freshDelayMs = isFresh ? -Math.min(freshElapsedMs, 420) : 0;
+
+    const connector = document.createElement("span");
+    const isActive = index === visibleTrailPath.length - 1;
+    connector.className = [
+      "path-connector",
+      isFresh ? "path-connector--fresh" : "",
+      isActive ? "path-connector--active" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    connector.style.left = `${startX}px`;
+    connector.style.top = `${startY}px`;
+    connector.style.width = `${connectorLength}px`;
+    connector.style.setProperty("--path-connector-angle", `${Math.atan2(dy, dx)}rad`);
+    if (isFresh) {
+      connector.style.setProperty("--path-connector-grow-delay", `${freshDelayMs.toFixed(0)}ms`);
+    }
+    connector.innerHTML = `<span class="path-connector__fill"></span>`;
+    layer.appendChild(connector);
+  }
+
+  return layer;
+}
+
 function getCurrentTileId() {
   if (gameState.currentPath.length === 0) {
     return gameState.currentStartTileId;
@@ -3007,6 +3338,13 @@ function renderHud() {
     // 强制重排以重启动画
     void icon.offsetWidth;
     icon.classList.add("bee-counter__icon--jump");
+    // jump 是一次性动画，播完移除 class 以让待机 idle 动画接管
+    const handleJumpEnd = (event) => {
+      if (event.animationName !== "bee-counter-jump") return;
+      icon.classList.remove("bee-counter__icon--jump");
+      icon.removeEventListener("animationend", handleJumpEnd);
+    };
+    icon.addEventListener("animationend", handleJumpEnd);
   }
 
 
@@ -3050,12 +3388,37 @@ function renderHud() {
   }
 }
 
-function createTileElement(tile, appearanceFrameMap = {}) {
+function createTileElement(
+  tile,
+  appearanceFrameMap = {},
+  visibleTrailPath = [],
+  trailPalette = null,
+  pathDangerActive = false
+) {
   const state = gameState.tileStateMap[tile.id];
   const isRevealed = state.revealed;
   const displayStartTileId = getDisplayStartTileId();
   const isStart = tile.id === displayStartTileId;
-  const isInPath = gameState.currentPath.includes(tile.id);
+  const pathIndex = visibleTrailPath.indexOf(tile.id);
+  const isInPath = pathIndex !== -1;
+  const isPathEnd = isInPath && pathIndex === visibleTrailPath.length - 1;
+  const isPathFading = isInPath && gameState.trailFading && gameState.currentPath.length === 0;
+  const isPathEndFresh = isPathEnd && typeof gameState.pathEndAnimationStarts[tile.id] === "number";
+  // 当前所在格的 dangerCount > 0（即周围有鸡）时，所有路径格持续抖动
+  const isDangerAlert = isInPath && pathDangerActive;
+  // 拖拽中 + 路径中 + 可采集植物：植物图层做循环呼吸（仅 isDragging 期间，松手后立即移除）
+  const isHarvestableActive =
+    gameState.isDragging &&
+    isInPath &&
+    isRevealed &&
+    (state.type === "flower" || state.type === "apple_tree" || state.type === "tulip");
+  // 用一个全局时间锚点（now % 周期）算出 negative animation-delay，
+  // 避免每次 renderBoard 重建 DOM 时呼吸动画从 0% 重新开始造成的卡顿/跳变。
+  // 周期需与 CSS @keyframes tile-harvestable-breathe 的 animation-duration 一致。
+  const harvestableBreathePeriodMs = 2200;
+  const harvestableBreatheDelayMs = isHarvestableActive
+    ? -(getNow() % harvestableBreathePeriodMs)
+    : 0;
   const isEnemy = isRevealed && state.type === "enemy";
   const isShaking = gameState.shakeTileIds.includes(tile.id);
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
@@ -3082,6 +3445,11 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     isStartPulse ? "tile--start-pulse" : "",
     isInvalidFlashing ? "tile--invalid-flash" : "",
     isInPath ? "tile--path" : "",
+    isPathEnd ? "tile--path-end" : "",
+    isPathEndFresh ? "tile--path-end-fresh" : "",
+    isPathFading ? "tile--path-fading" : "",
+    isDangerAlert ? "tile--danger-alert" : "",
+    isHarvestableActive ? "tile--harvestable-active" : "",
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
     isFlipping ? "tile--flipping" : "",
@@ -3109,6 +3477,11 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     button.style.setProperty("--tile-appear-easing", tileAppearConfig.easing);
   }
   button.style.setProperty("--tile-image", `url("${tileAsset}")`);
+  button.style.setProperty("--tile-ring-mask-image", `url("${getTileRingMaskAsset(state, tileAsset)}")`);
+  if (isInPath) {
+    const palette = trailPalette ?? getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+    button.style.setProperty("--tile-path-ring-color", palette.ring);
+  }
   if (isScoreBouncing) {
     // 用 negative animation-delay 让动画从已播放的进度继续，避免 renderBoard 重建 DOM 时跳跃从 0 重新开始
     const startedAt = gameState.scoreBounceStartedAt[tile.id];
@@ -3118,6 +3491,25 @@ function createTileElement(tile, appearanceFrameMap = {}) {
     } else {
       button.style.setProperty("--bounce-delay", "0ms");
     }
+  }
+  if (isPathEndFresh) {
+    const elapsed = Math.max(0, getNow() - gameState.pathEndAnimationStarts[tile.id]);
+    button.style.setProperty("--path-end-ring-delay", `${-Math.min(elapsed, 260)}ms`);
+  }
+  if (isHarvestableActive) {
+    // 让 renderBoard 重建 DOM 后呼吸动画从“当前应处于的进度”继续，而不是从头播
+    button.style.setProperty("--harvestable-breathe-delay", `${harvestableBreatheDelayMs}ms`);
+  }
+  if (isDangerAlert) {
+    // 给每个路径格一个稳定但错开的负 delay，让所有抖动节奏不同步。
+    // 使用 tile.id 的哈希保证位置一致，并按 pathIndex 拉开距离。
+    const indexOffset = pathIndex * 73;
+    let hash = 0;
+    for (let i = 0; i < tile.id.length; i += 1) {
+      hash = (hash * 31 + tile.id.charCodeAt(i)) | 0;
+    }
+    const delayMs = -(Math.abs(hash + indexOffset) % 360);
+    button.style.setProperty("--danger-alert-delay", `${delayMs}ms`);
   }
   button.dataset.tileId = tile.id;
   button.dataset.row = String(tile.row);
@@ -3183,6 +3575,20 @@ function renderBoard() {
   }
 
   const visibleTileIds = getVisibleTileIds();
+  const visibleTrailPath = getVisibleTrailPath();
+  const trailPalette = getTrailVisualPalette(visibleTrailPath.length, gameState.trailFail);
+  // 当前所在格周围有鸡（dangerCount > 0）时，所有路径格持续抖动。
+  // 仅在玩家拖拽中生效，松手/淡出/失败后立即取消。
+  const pathEndTileId = visibleTrailPath[visibleTrailPath.length - 1];
+  const pathEndState = pathEndTileId ? gameState.tileStateMap[pathEndTileId] : null;
+  const pathDangerActive =
+    gameState.isDragging &&
+    !gameState.trailFading &&
+    !gameState.trailFail &&
+    !!pathEndState &&
+    pathEndState.revealed &&
+    pathEndState.type !== "enemy" &&
+    (pathEndState.dangerCount || 0) > 0;
   const appearanceFrameMap = buildTileAppearanceFrameMap(visibleTileIds);
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
@@ -3409,84 +3815,11 @@ function getTileCenter(tileId) {
 function renderBoardTrail() {
   if (!dom?.board) return;
 
-  const sourcePath =
-    gameState.currentPath && gameState.currentPath.length > 0
-      ? gameState.currentPath
-      : gameState.trailPath || [];
-
-  let svg = dom.board.querySelector(":scope > svg.board__trail");
-
-  if (!sourcePath || sourcePath.length === 0) {
-    if (svg) svg.remove();
-    return;
+  // 主视觉已迁移到 tile ring + connector；这里清理迁移期残留 trail。
+  const svg = dom.board.querySelector(":scope > svg.board__trail");
+  if (svg) {
+    svg.remove();
   }
-
-  const points = sourcePath
-    .map((id) => getTileCenter(id))
-    .filter((p) => p);
-
-  if (points.length === 0) {
-    if (svg) svg.remove();
-    return;
-  }
-
-  const boardWidth = parseFloat(dom.board.style.width) || dom.board.clientWidth;
-  const boardHeight = parseFloat(dom.board.style.height) || dom.board.clientHeight;
-
-  if (!svg) {
-    svg = document.createElementNS(trailSvgNs, "svg");
-    svg.classList.add("board__trail");
-    svg.setAttribute("aria-hidden", "true");
-    const glow = document.createElementNS(trailSvgNs, "path");
-    glow.setAttribute("class", "board__trail-glow");
-    const stroke = document.createElementNS(trailSvgNs, "path");
-    stroke.setAttribute("class", "board__trail-stroke");
-    const flow = document.createElementNS(trailSvgNs, "path");
-    flow.setAttribute("class", "board__trail-flow");
-    const head = document.createElementNS(trailSvgNs, "circle");
-    head.setAttribute("class", "board__trail-head");
-    head.setAttribute("r", "10");
-    svg.appendChild(glow);
-    svg.appendChild(stroke);
-    svg.appendChild(flow);
-    svg.appendChild(head);
-    // 插入到棋盘最前面，确保 tile 覆盖在轨迹之上
-    dom.board.insertBefore(svg, dom.board.firstChild);
-  }
-
-  svg.setAttribute("width", String(boardWidth));
-  svg.setAttribute("height", String(boardHeight));
-  svg.setAttribute("viewBox", `0 0 ${boardWidth} ${boardHeight}`);
-
-  svg.classList.toggle("board__trail--fading", !!gameState.trailFading);
-  svg.classList.toggle("board__trail--fail", !!gameState.trailFail);
-  svg.classList.toggle("board__trail--single", points.length < 2);
-
-  const d =
-    points.length >= 2
-      ? points
-          .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-          .join(" ")
-      : "";
-
-  const glow = svg.querySelector(".board__trail-glow");
-  const stroke = svg.querySelector(".board__trail-stroke");
-  const flow = svg.querySelector(".board__trail-flow");
-  const head = svg.querySelector(".board__trail-head");
-
-  if (d) {
-    glow.setAttribute("d", d);
-    stroke.setAttribute("d", d);
-    flow.setAttribute("d", d);
-  } else {
-    glow.removeAttribute("d");
-    stroke.removeAttribute("d");
-    flow.removeAttribute("d");
-  }
-
-  const headPoint = points[points.length - 1];
-  head.setAttribute("cx", String(headPoint.x));
-  head.setAttribute("cy", String(headPoint.y));
 }
 
 function renderAll() {
@@ -3636,6 +3969,8 @@ function beginRun(tileId, pointerId = null) {
   gameState.trailPath = [tileId];
   gameState.trailFading = false;
   gameState.trailFail = false;
+  gameState.pathConnectorAnimationStarts = {};
+  gameState.pathEndAnimationStarts = {};
   gameState.currentRunVisitedTileIds = new Set([tileId]);
   gameState.currentRunHarvestedTileIds = new Set();
   gameState.lastSafeTileId = tileId;
@@ -3650,7 +3985,9 @@ function beginRun(tileId, pointerId = null) {
   // 起点格也算被采集：把它压入 pendingScoreList（与 extendRun 共用同一份逻辑）
   enqueueTileCollection(tileId);
   playStartSelectSound();
-  triggerStartPulse(tileId);
+  // 起手反馈走极简版：清掉残留的 start-pulse，避免和 tile--path-end 的放大叠加
+  gameState.startPulseTileId = null;
+  triggerStartPulse(tileId, { mode: "begin" });
   gameState.statusText = "采集中：滑入相邻格，松手后结算。";
   logEvent("新一轮开始", {
     currentStartTileId: tileId,
@@ -4286,6 +4623,129 @@ function waitForAllFlightsToLand(callback) {
   check();
 }
 
+// 结算阶段蜜蜂巡飞动画：从 HUD 蜜蜂计数器出发，沿本轮路径依次飞过每一格，
+// 顺势飞出屏幕；等结算完毕再从屏幕下方飞回 HUD 位置，HUD 蜜蜂回归并继续待机。
+// 节奏与 playRunSettlementSequence 的 tick 完全一致：每段时长 = settlementSequenceConfig.staggerMs，
+// 共用 scheduleCollectionTask 调度通道，避免节奏漂移。
+// 返回 { onSettlementComplete } 回调，由 settlement onComplete 触发回归段。
+function playSettlementBeeFlight(pathTileIds) {
+  const noop = { onSettlementComplete: () => {} };
+  if (!hasDom || !dom?.fxOverlay || !dom?.beeCounterIcon) return noop;
+  if (!Array.isArray(pathTileIds) || pathTileIds.length === 0) return noop;
+
+  const beeStartRect = dom.beeCounterIcon.getBoundingClientRect();
+  const startPoint = getOverlayRelativePointFromRect(beeStartRect, 0.5);
+  if (!startPoint) return noop;
+
+  // 依次拿到每个 path tile 的中心点（fx-overlay 局部坐标）
+  const waypoints = pathTileIds
+    .map((tileId) => {
+      const tileElement = dom?.board?.querySelector(`[data-tile-id="${tileId}"]`);
+      if (!tileElement) return null;
+      return getOverlayRelativePointFromRect(tileElement.getBoundingClientRect(), 0.5);
+    })
+    .filter(Boolean);
+
+  if (waypoints.length === 0) return noop;
+
+  // 蜜蜂尺寸与 HUD 蜜蜂保持一致：直接用 HUD 蜜蜂的真实渲染尺寸
+  const beeWidth = Math.round(beeStartRect.width);
+  const beeHeight = Math.round(beeStartRect.height);
+
+  // 飞行期间隐藏 HUD 蜜蜂（避免“两只蜜蜂同时存在”），结算回归后再显示
+  dom.beeCounterIcon.classList.add("bee-counter__icon--away");
+
+  // 蜜蜂元素
+  const bee = document.createElement("img");
+  bee.className = "settlement-bee";
+  bee.src = customCursorAsset;
+  bee.alt = "";
+  bee.setAttribute("aria-hidden", "true");
+  bee.style.width = `${beeWidth}px`;
+  bee.style.height = `${beeHeight}px`;
+  // 起始位置 = HUD 蜜蜂中心
+  bee.style.transform = `translate3d(${startPoint.x - beeWidth / 2}px, ${
+    startPoint.y - beeHeight / 2
+  }px, 0)`;
+  dom.fxOverlay.appendChild(bee);
+
+  const stagger = settlementSequenceConfig.staggerMs;
+  bee.style.transition = `transform ${stagger}ms cubic-bezier(0.45, 0, 0.55, 1)`;
+
+  const moveTo = (point, ms = stagger) => {
+    bee.style.transition = `transform ${ms}ms cubic-bezier(0.45, 0, 0.55, 1)`;
+    bee.style.transform = `translate3d(${point.x - beeWidth / 2}px, ${
+      point.y - beeHeight / 2
+    }px, 0)`;
+  };
+
+  // 第一段：HUD 起点 → path[0]
+  requestAnimationFrame(() => {
+    moveTo(waypoints[0]);
+  });
+
+  for (let i = 1; i < waypoints.length; i += 1) {
+    scheduleCollectionTask(() => {
+      moveTo(waypoints[i]);
+    }, i * stagger);
+  }
+
+  // 最后一段方向 → 顺势飞出屏幕
+  const last = waypoints[waypoints.length - 1];
+  const prev =
+    waypoints.length >= 2 ? waypoints[waypoints.length - 2] : startPoint;
+  const dx = last.x - prev.x;
+  const dy = last.y - prev.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const exitDistance = 900;
+  const exitPoint = {
+    x: last.x + (dx / len) * exitDistance,
+    y: last.y + (dy / len) * exitDistance,
+  };
+
+  const exitMs = Math.max(420, stagger * 2);
+  scheduleCollectionTask(() => {
+    moveTo(exitPoint, exitMs);
+  }, waypoints.length * stagger);
+
+  // 等 settlement 完成后，从屏幕下方飞回 HUD 位置
+  let isReturned = false;
+  const triggerReturn = () => {
+    if (isReturned) return;
+    isReturned = true;
+    if (!bee.isConnected) {
+      // 元素已被清理（例如中途 reset），直接恢复 HUD 蜜蜂
+      dom.beeCounterIcon?.classList.remove("bee-counter__icon--away");
+      return;
+    }
+
+    const overlayRect = dom.fxOverlay.getBoundingClientRect();
+    // 从 HUD 正下方屏幕外飞回（视觉：蜜蜂忙完一圈，从下方归巢）
+    const belowPoint = {
+      x: startPoint.x,
+      y: overlayRect.height + beeHeight + 40,
+    };
+
+    // 先瞬移到屏幕下方
+    bee.style.transition = "none";
+    bee.style.transform = `translate3d(${belowPoint.x - beeWidth / 2}px, ${
+      belowPoint.y - beeHeight / 2
+    }px, 0)`;
+    // 下一帧再做飞回过渡
+    requestAnimationFrame(() => {
+      const returnMs = 620;
+      moveTo(startPoint, returnMs);
+      // 飞到位后：清掉飞行蜜蜂，HUD 蜜蜂恢复显示（自然继续 idle/orbit）
+      scheduleCollectionTask(() => {
+        bee.remove();
+        dom.beeCounterIcon?.classList.remove("bee-counter__icon--away");
+      }, returnMs + 30);
+    });
+  };
+
+  return { onSettlementComplete: triggerReturn };
+}
+
 function playRunSettlementSequence(list, onComplete) {
   gameState.isSettling = true;
   renderAll();
@@ -4599,6 +5059,9 @@ function completeRun(outcome) {
     return { ok: true, reason: outcome, path, nextStartTileId };
   }
 
+  // 蜜蜂巡飞：仅在“成功结算 + 消耗了蜜蜂”时触发，与 settlement 节奏同步开始
+  const beeFlight = consumedBee ? playSettlementBeeFlight(path) : null;
+
   // 有花蜜要入账：进入结算序列
   playRunSettlementSequence(pendingListSnapshot, () => {
     finalizeSuccessRun({
@@ -4612,6 +5075,8 @@ function completeRun(outcome) {
     // A-PLN-FERTILIZER-01：先小鸡扑虫，再让活下来的虫吃植被
     runEnemyMovementsAfterRound();
     runCaterpillarMovementsAfterRound();
+    // 结算完毕：蜜蜂从屏幕下方飞回 HUD 位置，HUD 蜜蜂恢复待机
+    beeFlight?.onSettlementComplete?.();
   });
 
   renderAll();
@@ -4811,14 +5276,22 @@ function extendRun(tileId) {
   const wasRevealed = tileState.revealed;
   // 本轮“首访”判定：在写入 currentRunVisitedTileIds 之前抓，用来闸住体力扣减
   const isFirstVisitThisRun = !gameState.currentRunVisitedTileIds.has(tileId);
+  const previousTileId = gameState.currentPath[gameState.currentPath.length - 1];
   gameState.currentPath.push(tileId);
   gameState.trailPath = [...gameState.currentPath];
+  if (previousTileId) {
+    markFreshPathConnector(previousTileId, tileId);
+  }
+  markFreshPathEnd(tileId);
   gameState.currentRunVisitedTileIds.add(tileId);
 
   if (tileState.type === "enemy") {
     setTileRevealed(tileId);
     playTileEnemyHitSound();
     gameState.hasHitEnemy = true;
+    gameState.trailPath = [...gameState.currentPath];
+    gameState.trailFail = true;
+    gameState.trailFading = false;
     gameState.statusText = `踩到天敌 ${tileId}，本轮花蜜清零。`;
     logEvent("踩到天敌", {
       tileId,
