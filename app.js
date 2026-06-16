@@ -1730,15 +1730,79 @@ function buildTileAppearanceFrameMap(visibleTileIds) {
   return frameMap;
 }
 
+function getBoardPixelSize() {
+  const maxSlot = Math.max(...tiles.map((tile) => tile.slotX));
+  const maxRow = Math.max(...tiles.map((tile) => tile.row));
+  return {
+    width: boardMetrics.leftPadding * 2 + maxSlot * boardMetrics.xUnit + 56,
+    height: boardMetrics.topPadding * 2 + maxRow * boardMetrics.yUnit + 96,
+  };
+}
+
+function getTileBoardCenter(tileId) {
+  const tile = tilesById[tileId];
+
+  if (!tile) {
+    return null;
+  }
+
+  return {
+    x: boardMetrics.leftPadding + tile.slotX * boardMetrics.xUnit,
+    y: boardMetrics.topPadding + tile.row * boardMetrics.yUnit,
+  };
+}
+
+function buildCurrentPathSegments(path) {
+  if (!Array.isArray(path) || path.length < 2) {
+    return [];
+  }
+
+  const segments = [];
+
+  for (let index = 1; index < path.length; index += 1) {
+    segments.push([path[index - 1], path[index]]);
+  }
+
+  return segments;
+}
+
+function createPathOverlayElement(path) {
+  if (!hasDom) {
+    return null;
+  }
+
+  const { width, height } = getBoardPixelSize();
+  const overlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  overlay.setAttribute("class", "board-path-overlay");
+  overlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  overlay.setAttribute("aria-hidden", "true");
+
+  buildCurrentPathSegments(path).forEach(([fromTileId, toTileId]) => {
+    const start = getTileBoardCenter(fromTileId);
+    const end = getTileBoardCenter(toTileId);
+
+    if (!start || !end) {
+      return;
+    }
+
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("class", "board-path-overlay__segment");
+    line.setAttribute("x1", String(start.x));
+    line.setAttribute("y1", String(start.y));
+    line.setAttribute("x2", String(end.x));
+    line.setAttribute("y2", String(end.y));
+    overlay.appendChild(line);
+  });
+
+  return overlay;
+}
+
 function computeBoardSize() {
   if (!dom?.board) {
     return;
   }
 
-  const maxSlot = Math.max(...tiles.map((tile) => tile.slotX));
-  const maxRow = Math.max(...tiles.map((tile) => tile.row));
-  const width = boardMetrics.leftPadding * 2 + maxSlot * boardMetrics.xUnit + 56;
-  const height = boardMetrics.topPadding * 2 + maxRow * boardMetrics.yUnit + 96;
+  const { width, height } = getBoardPixelSize();
 
   dom.board.style.width = `${width}px`;
   dom.board.style.height = `${height}px`;
@@ -2280,6 +2344,12 @@ function renderBoard() {
   dom.board.classList.toggle("board--fail-flash", gameState.isFailFlash);
   dom.board.classList.toggle("board--collecting", gameState.isDragging);
   dom.board.innerHTML = "";
+
+  const pathOverlayElement = createPathOverlayElement(gameState.currentPath);
+  if (pathOverlayElement) {
+    dom.board.appendChild(pathOverlayElement);
+  }
+
   const fragment = document.createDocumentFragment();
 
   tiles.forEach((tile) => {
