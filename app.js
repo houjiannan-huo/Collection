@@ -3604,13 +3604,19 @@ function renderBoard() {
 
     let button = tileNodeCache.get(tile.id);
     if (!button || !button.isConnected) {
-      button = createTileElement(tile, appearanceFrameMap);
+      button = createTileElement(
+        tile,
+        appearanceFrameMap,
+        visibleTrailPath,
+        trailPalette,
+        pathDangerActive
+      );
       // 首次创建时同步内层签名，避免后续 update 误判
       tileNodeSigCache.set(tile.id, computeTileInnerSignature(tile));
       tileNodeCache.set(tile.id, button);
       fragment.appendChild(button);
     } else {
-      updateTileElement(tile, button, appearanceFrameMap);
+      updateTileElement(tile, button, appearanceFrameMap, visibleTrailPath, pathDangerActive);
     }
   });
 
@@ -3659,14 +3665,26 @@ function computeTileInnerSignature(tile) {
   ].join("|");
 }
 
-function updateTileElement(tile, button, appearanceFrameMap = {}) {
+function updateTileElement(
+  tile,
+  button,
+  appearanceFrameMap = {},
+  visibleTrailPath = null,
+  pathDangerActive = false
+) {
   const state = gameState.tileStateMap[tile.id];
   if (!state) return;
 
   const isRevealed = state.revealed;
   const displayStartTileId = getDisplayStartTileId();
   const isStart = tile.id === displayStartTileId;
-  const isInPath = gameState.currentPath.includes(tile.id);
+  // 优先使用 renderBoard 传入的 visibleTrailPath（与 createTileElement 一致），
+  // 兼容旧调用方时回退到 currentPath。pathIndex 在 danger-alert 错峰 delay 中使用。
+  const trailPathForIndex = visibleTrailPath ?? gameState.currentPath;
+  const pathIndex = trailPathForIndex.indexOf(tile.id);
+  const isInPath = pathIndex !== -1;
+  // 路径上 + 末端格 dangerCount>0：触发警戒抖动
+  const isDangerAlert = isInPath && pathDangerActive;
   const isEnemy = isRevealed && state.type === "enemy";
   const isShaking = gameState.shakeTileIds.includes(tile.id);
   const isInvalidFlashing = gameState.invalidFlashTileIds.includes(tile.id);
@@ -3692,6 +3710,7 @@ function updateTileElement(tile, button, appearanceFrameMap = {}) {
     isStartPulse ? "tile--start-pulse" : "",
     isInvalidFlashing ? "tile--invalid-flash" : "",
     isInPath ? "tile--path" : "",
+    isDangerAlert ? "tile--danger-alert" : "",
     isEnemy ? "tile--enemy" : "",
     isShaking ? "tile--shake" : "",
     isFlipping ? "tile--flipping" : "",
@@ -3736,6 +3755,21 @@ function updateTileElement(tile, button, appearanceFrameMap = {}) {
       button.style.setProperty("--bounce-delay", `${-elapsed}ms`);
     } else {
       button.style.setProperty("--bounce-delay", "0ms");
+    }
+  }
+
+  if (isDangerAlert) {
+    // 与 createTileElement 一致：用 tile.id 哈希 + pathIndex 错峰，
+    // 让所有路径格的抖动节奏不同步、视觉更自然。
+    const indexOffset = pathIndex * 73;
+    let hash = 0;
+    for (let i = 0; i < tile.id.length; i += 1) {
+      hash = (hash * 31 + tile.id.charCodeAt(i)) | 0;
+    }
+    const delayMs = -(Math.abs(hash + indexOffset) % 360);
+    const delayStr = `${delayMs}ms`;
+    if (button.style.getPropertyValue("--danger-alert-delay") !== delayStr) {
+      button.style.setProperty("--danger-alert-delay", delayStr);
     }
   }
 
