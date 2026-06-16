@@ -5,8 +5,40 @@ const tileTypeOrder = ["enemy", "flower", "apple_tree", "tulip", "empty"];
 // 三章 × 4 关 + 2 个 rest 关 = 共 12 关。每关都标注 4C Hooks 与 Kishōtenketsu 阶段。
 // 详见 A-PLN.md "A-PLN-LEVEL-DESIGN-FINAL" 章节。
 
-// 复用 13 / 16 / 19 / 22 四种盘面拓扑。
+// 7 / 9 / 11 / 13 / 16 / 19 / 22 盘面拓扑。
 // 邻接规则要求相邻行 slot parity 必须相反（hex-like 行交错），且起点行至少有 3 个邻居。
+const LAYOUT_7 = {
+  layoutRows: [2, 3, 2],
+  rowTileIds: [
+    ["T01", "T02"],
+    ["T03", "T04", "T05"],
+    ["T07", "T06"],
+  ],
+  rowSlots: [[2, 4], [1, 3, 5], [2, 4]],
+  startTileId: "T07",
+};
+const LAYOUT_9 = {
+  layoutRows: [2, 3, 2, 2],
+  rowTileIds: [
+    ["T01", "T02"],
+    ["T03", "T04", "T05"],
+    ["T06", "T07"],
+    ["T08", "T09"],
+  ],
+  rowSlots: [[2, 4], [1, 3, 5], [2, 4], [1, 3]],
+  startTileId: "T09",
+};
+const LAYOUT_11 = {
+  layoutRows: [2, 3, 3, 3],
+  rowTileIds: [
+    ["T01", "T02"],
+    ["T03", "T04", "T05"],
+    ["T06", "T07", "T08"],
+    ["T09", "T10", "T11"],
+  ],
+  rowSlots: [[2, 4], [1, 3, 5], [2, 4, 6], [1, 3, 5]],
+  startTileId: "T10",
+};
 const LAYOUT_13 = {
   layoutRows: [2, 3, 3, 3, 2],
   rowTileIds: [
@@ -75,37 +107,37 @@ const LAYOUT_22 = {
 const levelConfigs = [
   // ===== 第 1 章：花、撞鸟、苹果 =====
   {
-    // L1：纯花海，零敌人，零压力。唯一目标 = 学会"按住—拖动—松手"。
-    id: "L1", name: "第 1 关 · 拖动起步", chapter: 1, layout: LAYOUT_13,
-    tileTypeRatioBaseCounts: { enemy: 0, flower: 9, apple_tree: 0, tulip: 0, empty: 4 },
-    initialBeeCount: 8,
-    goalTargets: { flower: 5, apple: 0, tulip: 0 },
+    // L1：7 格 mini 盘，零敌人零压力，约 2 个 run 完成。
+    id: "L1", name: "第 1 关 · 拖动起步", chapter: 1, layout: LAYOUT_7,
+    tileTypeRatioBaseCounts: { enemy: 0, flower: 5, apple_tree: 0, tulip: 0, empty: 2 },
+    initialBeeCount: 6,
+    goalTargets: { flower: 4, apple: 0, tulip: 0 },
     enemyPlacementRule: "default",
     hooks: "学习：按住一朵花，拖向相邻的另一朵",
     intro: "盘面只有花，没有敌人；按住起点，向相邻格滑动，松手结算。",
-    designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0.0, kishoStage: "Introduce", rhythm: "valley" },
+    designerNotes: { expectedRunsToWin: 2, expectedFailRate: 0.0, kishoStage: "Introduce", rhythm: "valley" },
   },
   {
-    // L2：首次出现 1 只鸟。安全路径外才会出现，绝不会开局就死。
-    id: "L2", name: "第 2 关 · 鸟来了", chapter: 1, layout: LAYOUT_13,
-    tileTypeRatioBaseCounts: { enemy: 1, flower: 8, apple_tree: 0, tulip: 0, empty: 4 },
-    initialBeeCount: 7,
-    goalTargets: { flower: 6, apple: 0, tulip: 0 },
+    // L2：9 格 mini 盘，首次出现 1 只鸟，安全路径外才会出现。
+    id: "L2", name: "第 2 关 · 鸟来了", chapter: 1, layout: LAYOUT_9,
+    tileTypeRatioBaseCounts: { enemy: 1, flower: 6, apple_tree: 0, tulip: 0, empty: 2 },
+    initialBeeCount: 6,
+    goalTargets: { flower: 4, apple: 0, tulip: 0 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：撞鸟会让本轮收益清零、扣 1 只蜜蜂",
     intro: "盘上多了一只鸟。隔壁格的数字提醒你它在哪边——绕开它。",
-    designerNotes: { expectedRunsToWin: 4, expectedFailRate: 0.1, kishoStage: "Train", rhythm: "valley→rise" },
+    designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0.1, kishoStage: "Train", rhythm: "valley→rise" },
   },
   {
-    // L3：苹果树登场。盘面只 1 棵 apple，让玩家有时间看清 blossom/fruit/harvested 三态循环。
-    id: "L3", name: "第 3 关 · 苹果开花了", chapter: 1, layout: LAYOUT_16,
-    tileTypeRatioBaseCounts: { enemy: 2, flower: 10, apple_tree: 1, tulip: 0, empty: 3 },
-    initialBeeCount: 7,
-    goalTargets: { flower: 8, apple: 1, tulip: 0 },
+    // L3：11 格 mini 盘，苹果树登场，1 棵 apple = 1 个 run 即可完成苹果目标。
+    id: "L3", name: "第 3 关 · 苹果开花了", chapter: 1, layout: LAYOUT_11,
+    tileTypeRatioBaseCounts: { enemy: 1, flower: 7, apple_tree: 1, tulip: 0, empty: 2 },
+    initialBeeCount: 6,
+    goalTargets: { flower: 5, apple: 1, tulip: 0 },
     enemyPlacementRule: "exclude-shortest-safe-path",
     hooks: "认识：苹果树会换装（开花→结果→采空）",
     intro: "粉色花是苹果树。只有开花期能收，采过会变成果实，再下一轮才回到花期。",
-    designerNotes: { expectedRunsToWin: 5, expectedFailRate: 0.2, kishoStage: "Twist", rhythm: "rise" },
+    designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0.15, kishoStage: "Twist", rhythm: "rise" },
   },
   {
     // L4：第 1 章 Conclude。鸟密度上升，apple 增到 2 棵保证目标可达。
@@ -2785,6 +2817,8 @@ function beginRun(tileId, pointerId = null) {
     gameState.beeStamina = Math.max(0, gameState.beeStamina - 1);
   }
   syncBeeStaminaFromState();
+  // 起点格也算被采集：把它压入 pendingScoreList（与 extendRun 共用同一份逻辑）
+  enqueueTileCollection(tileId);
   playStartSelectSound();
   triggerStartPulse(tileId);
   gameState.statusText = "采集中：滑入相邻格，松手后结算。";
@@ -3163,6 +3197,95 @@ function completeRun(outcome) {
   return { ok: true, reason: outcome, path, nextStartTileId };
 }
 
+// 把一格的“采集/副作用”压入 pendingScoreList。
+// 起点格（beginRun）与滑入的新格（extendRun）都会调用，保证起点同样被采集。
+function enqueueTileCollection(tileId) {
+  const tileState = gameState.tileStateMap[tileId];
+  if (!tileState) return;
+
+  const alreadyInPendingScore = gameState.pendingScoreList.some(
+    (entry) => entry.tileId === tileId
+  );
+  if (alreadyInPendingScore) return;
+
+  if (tileState.type === "flower") {
+    const flowerStage = getFlowerStage(tileState);
+    if (flowerStage === "bloom") {
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "flower",
+        amount: 1,
+        sideEffect: "advance-flower-to-sprout",
+      });
+      incrementCombo(tileId);
+    } else {
+      // sprout：采集 0 花蜜、不触发 Combo / 不出飞花，
+      // 但走一次“silentBounce 小跳 + 顶点切图”作为视觉反馈
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "flower_sprout",
+        amount: 0,
+        sideEffect: "advance-flower-to-bloom",
+        silentBounce: true,
+      });
+    }
+  } else if (tileState.type === "tulip") {
+    const tulipStage = getTulipStage(tileState);
+    if (tulipStage === "bloom") {
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "tulip",
+        amount: 2,
+        sideEffect: "advance-tulip-to-sprout",
+      });
+      incrementCombo(tileId);
+    } else {
+      // sprout：0 花蜜，不触发 Combo / 不出飞花，
+      // silentBounce 小跳 + 顶点切回 bloom
+      gameState.pendingScoreList.push({
+        tileId,
+        type: "tulip_sprout",
+        amount: 0,
+        sideEffect: "advance-tulip-to-bloom",
+        silentBounce: true,
+      });
+    }
+  } else if (
+    tileState.type === "apple_tree" &&
+    getAppleTreeGrowthStage(tileState) === "blossom"
+  ) {
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "apple_tree_blossom",
+      amount: 1,
+      sideEffect: "advance-to-fruit",
+    });
+    incrementCombo(tileId);
+  } else if (
+    tileState.type === "apple_tree" &&
+    getAppleTreeGrowthStage(tileState) === "fruit"
+  ) {
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "apple_tree_fruit",
+      amount: 0,
+      sideEffect: "advance-to-harvested",
+      silentBounce: true,
+    });
+  } else if (
+    tileState.type === "apple_tree" &&
+    getAppleTreeGrowthStage(tileState) === "harvested"
+  ) {
+    gameState.pendingScoreList.push({
+      tileId,
+      type: "apple_tree_harvested",
+      amount: 0,
+      sideEffect: "advance-to-blossom",
+      silentBounce: true,
+    });
+  }
+}
+
 function extendRun(tileId) {
   if (!gameState.isDragging) {
     return { ok: false, reason: "not-dragging" };
@@ -3200,89 +3323,7 @@ function extendRun(tileId) {
 
   // 拖动期：所有“收益 / 副作用”都不立即生效，仅 push 到 pendingScoreList，
   // 等松手成功结算播完序列后再统一入账与提交副作用。
-  const alreadyInPendingScore = gameState.pendingScoreList.some(
-    (entry) => entry.tileId === tileId
-  );
-
-  if (tileState.type === "flower" && !alreadyInPendingScore) {
-    const flowerStage = getFlowerStage(tileState);
-    if (flowerStage === "bloom") {
-      gameState.pendingScoreList.push({
-        tileId,
-        type: "flower",
-        amount: 1,
-        sideEffect: "advance-flower-to-sprout",
-      });
-      incrementCombo(tileId);
-    } else {
-      // sprout：采集 0 花蜜、不触发 Combo / 不出飞花，
-      // 但走一次“silentBounce 小跳 + 顶点切图”作为视觉反馈
-      gameState.pendingScoreList.push({
-        tileId,
-        type: "flower_sprout",
-        amount: 0,
-        sideEffect: "advance-flower-to-bloom",
-        silentBounce: true,
-      });
-    }
-  } else if (tileState.type === "tulip" && !alreadyInPendingScore) {
-    const tulipStage = getTulipStage(tileState);
-    if (tulipStage === "bloom") {
-      gameState.pendingScoreList.push({
-        tileId,
-        type: "tulip",
-        amount: 2,
-        sideEffect: "advance-tulip-to-sprout",
-      });
-      incrementCombo(tileId);
-    } else {
-      // sprout：0 花蜜，不触发 Combo / 不出飞花，
-      // silentBounce 小跳 + 顶点切回 bloom
-      gameState.pendingScoreList.push({
-        tileId,
-        type: "tulip_sprout",
-        amount: 0,
-        sideEffect: "advance-tulip-to-bloom",
-        silentBounce: true,
-      });
-    }
-  } else if (
-    tileState.type === "apple_tree" &&
-    getAppleTreeGrowthStage(tileState) === "blossom" &&
-    !alreadyInPendingScore
-  ) {
-    gameState.pendingScoreList.push({
-      tileId,
-      type: "apple_tree_blossom",
-      amount: 1,
-      sideEffect: "advance-to-fruit",
-    });
-    incrementCombo(tileId);
-  } else if (
-    tileState.type === "apple_tree" &&
-    getAppleTreeGrowthStage(tileState) === "fruit" &&
-    !alreadyInPendingScore
-  ) {
-    gameState.pendingScoreList.push({
-      tileId,
-      type: "apple_tree_fruit",
-      amount: 0,
-      sideEffect: "advance-to-harvested",
-      silentBounce: true,
-    });
-  } else if (
-    tileState.type === "apple_tree" &&
-    getAppleTreeGrowthStage(tileState) === "harvested" &&
-    !alreadyInPendingScore
-  ) {
-    gameState.pendingScoreList.push({
-      tileId,
-      type: "apple_tree_harvested",
-      amount: 0,
-      sideEffect: "advance-to-blossom",
-      silentBounce: true,
-    });
-  }
+  enqueueTileCollection(tileId);
 
   // 拖动期 statusText 统一口径（口径 C）：只显示路径长度，不再透露具体得分
   gameState.statusText = `采集中：已走 ${gameState.currentPath.length} 格`;

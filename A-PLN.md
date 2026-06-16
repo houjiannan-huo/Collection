@@ -564,12 +564,12 @@
 - intro toast 时机：关卡载入即弹（沿用 `showToast`）
 - NotebookLM：不再追问
 
-### 12 关曲线（v2：每关只引入一个新东西 / L1 零敌人）
+### 12 关曲线（v3：前 3 关 mini 盘 + L1 零敌人 + 每关只引入一个新东西）
 | 关 | 章 | Kishō | 节奏 | 唯一新东西 | 盘面 | 蜜蜂 | enemy/flower/apple/tulip/empty | 目标 F/A/T | enemy 密度 | enemyPlacementRule |
 |---|---|---|---|---|---|---|---|---|---|---|
-| L1 | 1 | Introduce | valley | 学拖动 | 13 | 8 | 0/9/0/0/4 | 5/0/0 | 0% | default |
-| L2 | 1 | Train | valley→rise | 首次见鸟 | 13 | 7 | 1/8/0/0/4 | 6/0/0 | 7.7% | exclude-shortest-safe-path |
-| L3 | 1 | Twist | rise | 苹果树三态 | 16 | 7 | 2/10/1/0/3 | 8/1/0 | 12.5% | exclude-shortest-safe-path |
+| L1 | 1 | Introduce | valley | 学拖动 | **7** | 6 | 0/5/0/0/2 | 4/0/0 | 0% | default |
+| L2 | 1 | Train | valley→rise | 首次见鸟 | **9** | 6 | 1/6/0/0/2 | 4/0/0 | 11.1% | exclude-shortest-safe-path |
+| L3 | 1 | Twist | rise | 苹果树三态 | **11** | 6 | 1/7/1/0/2 | 5/1/0 | 9.1% | exclude-shortest-safe-path |
 | L4 | 1 | Conclude | peak | 第 1 章综合 | 16 | 6 | 3/9/2/0/2 | 10/1/0 | 18.8% | default |
 | L5 | rest | Rest | rest | 回血关 | 13 | 8 | 0/10/0/0/3 | 6/0/0 | 0% | default |
 | L6 | 2 | Introduce | valley | 郁金香 +2 | 16 | 7 | 1/10/0/2/3 | 8/0/2 | 6.3% | exclude-shortest-safe-path |
