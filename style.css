@@ -201,15 +201,28 @@ body::before {
 
 .hud-card--goals {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 12px;
   padding: 16px 32px;
   width: auto;
   min-width: 0;
+  /* 每行最多 4 个 goal-item：4 * 96 + 3 * 12 + 32 * 2 + 4(border) = 488，留余量 */
+  max-width: 500px;
   background: #fffaf0;
   border-color: rgba(191, 126, 36, 0.18);
   border-radius: 56px;
+  /* 目标 HUD 整体放大 26%（原 1.4 再缩 10% = 1.26），保持视觉为一组 pill；
+     margin-bottom 补偿 scale 不影响布局造成的下方重叠 */
+  transform: scale(1.26);
+  transform-origin: top center;
+  margin-bottom: 32px;
+}
+
+/* 当目标超过 4 个会换到第二行，下方留更多空间避免与盘面重叠 */
+.hud-card--goals:has(.goal-item:nth-of-type(5):not([hidden])) {
+  margin-bottom: 64px;
 }
 
 .goal-item {
@@ -1197,10 +1210,10 @@ body.is-dragging-cursor * {
 
 .bee-counter {
   /* 已移出 .game-stage（避免被 stage 的 transform 影响位置），
-     直接锚到 viewport 右下；脱离了 stage 的 scale，因此自带一个 scale 维持视觉比例 */
+     直接锚到 viewport 左上，作为目标 HUD 左侧的"剩余蜜蜂"图标。 */
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  top: max(8px, env(safe-area-inset-top, 0px));
   width: 140px;
   display: flex;
   flex-direction: column;
@@ -1210,7 +1223,7 @@ body.is-dragging-cursor * {
   pointer-events: none;
   /* 桌面端缩小到原 1.15 的约一半，与棋盘上 hex 的视觉量级一致 */
   transform: scale(0.6);
-  transform-origin: bottom right;
+  transform-origin: top left;
 }
 
 .bee-counter__frame {
@@ -1224,10 +1237,11 @@ body.is-dragging-cursor * {
 }
 
 .bee-counter__icon {
-  width: 124.9%;
+  /* 蜜蜂图标改为框内居中，不再向上溢出 */
+  width: 111.8%;
   height: auto;
-  margin-top: -8%;
-  transform: translate(5px, -40px);
+  margin-top: 0;
+  transform: translate(4px, 4px);
   transform-origin: 50% 100%;
   image-rendering: -webkit-optimize-contrast;
   pointer-events: none;
@@ -1236,10 +1250,11 @@ body.is-dragging-cursor * {
 
 .bee-counter__number {
   position: relative;
-  width: 78%;
+  width: 82%;
   aspect-ratio: 1 / 0.42;
-  margin-top: -34%;
-  transform: translateY(-44px) scale(1.09);
+  /* x10 牌挪到框底部前方，正好叠在框下沿，居中显示 */
+  margin-top: -14%;
+  transform: translateY(-40px) scale(1.05);
   background: url("assets/ui/beeframe_number_01.png") no-repeat center/100% 100%;
   display: flex;
   align-items: center;
@@ -1266,19 +1281,19 @@ body.is-dragging-cursor * {
 
 @keyframes bee-counter-jump {
   0% {
-    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+    transform: translate(4px, 4px) scaleY(1) scaleX(1);
   }
   15% {
-    transform: translate(5px, -36px) scaleY(0.82) scaleX(1.12);
+    transform: translate(4px, 8px) scaleY(0.82) scaleX(1.12);
   }
   45% {
-    transform: translate(5px, -72px) scaleY(1.08) scaleX(0.94);
+    transform: translate(4px, -24px) scaleY(1.08) scaleX(0.94);
   }
   75% {
-    transform: translate(5px, -40px) scaleY(0.9) scaleX(1.08);
+    transform: translate(4px, 4px) scaleY(0.9) scaleX(1.08);
   }
   100% {
-    transform: translate(5px, -40px) scaleY(1) scaleX(1);
+    transform: translate(4px, 4px) scaleY(1) scaleX(1);
   }
 }
 
@@ -1452,7 +1467,13 @@ body.is-dragging-cursor * {
 @media (max-width: 560px) {
   .app-shell {
     height: 100svh;
-    padding: 8px 10px 0;
+    /* 移动端必须保留 safe-area-inset-top；额外 +44px 给 iPhone Dynamic Island /
+       Android 居中挖孔屏腾出位置（iOS safe-area 只覆盖状态栏高度，
+       Dynamic Island 的下沿通常会突破 safe-area 再往下延伸 ~40px） */
+    padding-top: calc(max(8px, env(safe-area-inset-top, 0px)) + 44px);
+    padding-bottom: 0;
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
   }
 
   .game-stage {
@@ -1490,6 +1511,14 @@ body.is-dragging-cursor * {
     gap: 8px;
     padding: 12px 24px;
     border-radius: 44px;
+    margin-bottom: 25px;
+    /* 手机端每行最多 4 个：4 * 72 + 3 * 8 + 24 * 2 + 4(border) = 364，留余量 */
+    max-width: 376px;
+    flex-wrap: wrap;
+  }
+
+  .hud-card--goals:has(.goal-item:nth-of-type(5):not([hidden])) {
+    margin-bottom: 50px;
   }
 
   .goal-item {
@@ -1518,34 +1547,34 @@ body.is-dragging-cursor * {
   }
 
   .bee-counter {
-    /* 手机端改为 fixed，锚到屏幕右下；避免因 game-stage 高度随关卡变化把它带飞到屏幕中间 */
+    /* 手机端：锚到屏幕左上，作为目标 HUD 左侧的"剩余蜜蜂"图标 */
     position: fixed;
-    right: max(8px, env(safe-area-inset-right, 0px));
-    bottom: max(8px, env(safe-area-inset-bottom, 0px));
-    left: auto;
-    top: auto;
+    left: max(6px, env(safe-area-inset-left, 0px));
+    top: max(4px, env(safe-area-inset-top, 0px));
+    right: auto;
+    bottom: auto;
     width: 100px;
     /* 手机端缩放：在原 0.5 基础上放大 20% → 0.6 */
     transform: scale(0.6);
-    transform-origin: bottom right;
+    transform-origin: top left;
     z-index: 30;
   }
 
   .bee-counter__icon {
-    width: 118%;
-    transform: translate(0, -32px);
+    width: 111.8%;
+    transform: translate(4px, 2px);
   }
 
   @keyframes bee-counter-jump {
-    0% { transform: translate(0, -32px) scaleY(1) scaleX(1); }
-    15% { transform: translate(0, -28px) scaleY(0.82) scaleX(1.12); }
-    45% { transform: translate(0, -60px) scaleY(1.08) scaleX(0.94); }
-    75% { transform: translate(0, -32px) scaleY(0.9) scaleX(1.08); }
-    100% { transform: translate(0, -32px) scaleY(1) scaleX(1); }
+    0% { transform: translate(4px, 2px) scaleY(1) scaleX(1); }
+    15% { transform: translate(4px, 6px) scaleY(0.82) scaleX(1.12); }
+    45% { transform: translate(4px, -22px) scaleY(1.08) scaleX(0.94); }
+    75% { transform: translate(4px, 2px) scaleY(0.9) scaleX(1.08); }
+    100% { transform: translate(4px, 2px) scaleY(1) scaleX(1); }
   }
 
   .bee-counter__number {
-    transform: translateY(-32px) scale(1.05);
+    transform: translateY(-42px) scale(1.02);
   }
 
   .bee-counter__number strong {
@@ -1556,9 +1585,13 @@ body.is-dragging-cursor * {
 /* ====== 选关界面（A-PLN-LEVEL-DESIGN-FINAL） ====== */
 .level-select-toggle {
   position: fixed;
-  top: max(16px, env(safe-area-inset-top, 0px));
-  right: calc(max(16px, env(safe-area-inset-right, 0px)) + 54px);
+  /* 选关按钮：放在音乐（bgm-toggle）正下方，与音乐按钮右对齐 */
+  top: calc(max(16px, env(safe-area-inset-top, 0px)) + 44px + 10px);
+  right: max(16px, env(safe-area-inset-right, 0px));
   height: 44px;
+  /* 选关按钮整体缩小 20%，保持视觉为一组 */
+  transform: scale(0.8);
+  transform-origin: top right;
   padding: 0 14px;
   border: 2px solid rgba(191, 126, 36, 0.28);
   border-radius: 999px;
@@ -1703,7 +1736,8 @@ body.is-dragging-cursor * {
     grid-template-columns: repeat(2, 1fr);
   }
   .level-select-toggle {
-    right: calc(max(16px, env(safe-area-inset-right, 0px)) + 54px);
+    top: calc(max(16px, env(safe-area-inset-top, 0px)) + 44px + 10px);
+    right: max(16px, env(safe-area-inset-right, 0px));
     font-size: 14px;
     padding: 0 12px;
   }

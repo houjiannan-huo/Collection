@@ -135,18 +135,18 @@ const levelConfigs = [
     id: "L3", name: "第 3 关 · 苹果开花了", chapter: 1, layout: LAYOUT_11,
     tileTypeRatioBaseCounts: { enemy: 1, flower: 7, flower_yellow: 0, flower_red: 0, apple_tree: 1, tulip: 0, tulip_white: 0, bee: 0, caterpillar: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 5, flower_yellow: 0, flower_red: 0, apple: 1, appleFruit: 0, tulip: 0, tulip_white: 0 },
+    goalTargets: { flower: 5, flower_yellow: 0, flower_red: 0, apple: 2, appleFruit: 1, tulip: 0, tulip_white: 0 },
     enemyPlacementRule: "exclude-shortest-safe-path",
-    hooks: "认识：苹果树会换装（开花→结果→采空）",
-    intro: "粉色花是苹果树。只有开花期能收，采过会变成果实，再下一轮才回到花期。",
-    designerNotes: { expectedRunsToWin: 3, expectedFailRate: 0.15, kishoStage: "Twist", rhythm: "rise" },
+    hooks: "认识：采花 + 采果完整周期",
+    intro: "粉色花是苹果树。先采开花期得苹果花，下一轮再回来采果实。",
+    designerNotes: { expectedRunsToWin: 4, expectedFailRate: 0.15, kishoStage: "Twist", rhythm: "rise" },
   },
   {
     // L4：第 1 章 Conclude。鸟密度跳到 3，配 2 棵 apple。
     id: "L4", name: "第 4 关 · 第一章考核", chapter: 1, layout: LAYOUT_16,
     tileTypeRatioBaseCounts: { enemy: 3, flower: 9, flower_yellow: 0, flower_red: 0, apple_tree: 2, tulip: 0, tulip_white: 0, bee: 0, caterpillar: 0, empty: 2 },
     initialBeeCount: 6,
-    goalTargets: { flower: 10, flower_yellow: 0, flower_red: 0, apple: 1, appleFruit: 0, tulip: 0, tulip_white: 0 },
+    goalTargets: { flower: 10, flower_yellow: 0, flower_red: 0, apple: 1, appleFruit: 1, tulip: 0, tulip_white: 0 },
     enemyPlacementRule: "default",
     hooks: "综合：花 + 苹果 + 3 只鸟",
     intro: "鸟更多了；记得用边界数字提前判断敌人位置。",
@@ -1013,6 +1013,7 @@ const dom = hasDom
       goalTulipWhiteItem: document.querySelector('.goal-item[data-goal="tulip-white"]'),
       beesLeft: document.getElementById("bees-left"),
       beeCounterIcon: document.getElementById("bee-counter-icon"),
+      beeCounter: document.querySelector(".bee-counter"),
       statusText: document.getElementById("status-text"),
       toast: document.getElementById("toast"),
       gameOver: document.getElementById("game-over"),
@@ -2520,9 +2521,33 @@ function applyResponsiveGameScale() {
   dom.gameStage.style.top = `${topOffset}px`;
   dom.gameStage.style.transform = `translateX(-50%) scale(${scale})`;
 
+  alignBeeCounterToGoals();
+
   if (comboState.count > 0 && comboState.lastTileId) {
     updateComboPopupPosition(comboState.lastTileId);
   }
+}
+
+// 让"剩余蜜蜂"UI 始终位于"目标 HUD pill"的左侧、并保持 20px 视觉距离。
+// 目标 HUD pill 在 viewport 上水平居中（受 game-stage 的 transform 影响），
+// 因此 CSS 单靠 left/right 无法精确对齐，需要在布局完成后读取 pill 的实际 rect 再写入。
+function alignBeeCounterToGoals() {
+  if (!hasDom || !dom?.beeCounter || !dom?.goalCard) {
+    return;
+  }
+  const pillRect = dom.goalCard.getBoundingClientRect();
+  const beeRect = dom.beeCounter.getBoundingClientRect();
+  if (!pillRect.width || !beeRect.width) {
+    return;
+  }
+  // bee-counter 设了 transform-origin: top left + scale(0.6)，视觉 left == 布局 left；
+  // 把布局 left 放到 pill 左缘前 20px 处即可让两者视觉间距正好 20px。
+  const gap = 20;
+  const desiredLeft = pillRect.left - beeRect.width - gap;
+  const minLeft = 4; // 极窄屏兜底，避免被切出 viewport
+  dom.beeCounter.style.left = `${Math.max(minLeft, desiredLeft)}px`;
+  // 同步 top：让蜜蜂 UI 顶部与目标 pill 顶部对齐，避免移动端把 pill 推开后两者错位。
+  dom.beeCounter.style.top = `${Math.max(0, pillRect.top)}px`;
 }
 
 function getTileTypeLabel(type) {
@@ -2940,6 +2965,8 @@ function applyGoalVisibility() {
   if (dom.goalTulipItem) dom.goalTulipItem.hidden = goalTargets.tulip === 0;
   if (dom.goalTulipWhiteItem) dom.goalTulipWhiteItem.hidden = goalTargets.tulip_white === 0;
   if (dom.goalCard) dom.goalCard.setAttribute("aria-label", buildGoalCardAriaLabel());
+  // pill 内容变化会改变它的宽度，立即重排"剩余蜜蜂"以保持 20px 距离
+  alignBeeCounterToGoals();
 }
 
 function renderHud() {
